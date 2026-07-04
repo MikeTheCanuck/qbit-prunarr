@@ -1,0 +1,19 @@
+<tr id="row-{{ t.hash }}">
+  <td>
+    <input type="checkbox" name="hashes" value="{{ t.hash }}"
+           class="torrent-cb" data-size="{{ t.size_gb }}"
+           data-bucket="{{ bucket.label }}">
+  </td>
+  <td>{{ t.name }}</td>
+  <td>{{ t.size_gb }} GB</td>
+  <td>{{ t.days_inactive }}</td>
+  <td>{{ t.category }}</td>
+  <td>
+    <button hx-delete="/torrents/{{ t.hash }}"
+            hx-target="#row-{{ t.hash }}"
+            hx-swap="outerHTML"
+            hx-confirm="Delete {{ t.name }}?">
+      Delete
+    </button>
+  </td>
+</tr>

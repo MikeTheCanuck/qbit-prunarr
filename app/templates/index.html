@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>qBit Pruner</title>
+  <script src="https://unpkg.com/htmx.org@2.0.3"></script>
+  <style>
+    body { font-family: sans-serif; max-width: 1200px; margin: 0 auto; padding: 16px; }
+    h1 { margin-top: 0; }
+    .error-banner { background: #f8d7da; color: #842029; padding: 10px 16px; margin-bottom: 16px; border-radius: 4px; }
+    .flash-banner { background: #fff3cd; color: #664d03; padding: 10px 16px; margin-bottom: 16px; border-radius: 4px; }
+.controls { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; flex-wrap: wrap; }
+    .slider-group { display: flex; align-items: center; gap: 8px; }
+    .bulk-bar { margin-bottom: 8px; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { padding: 6px 12px; text-align: left; border-bottom: 1px solid #ddd; }
+    th { background: #f8f8f8; }
+    .bucket-header td { background: #f0f0f0; font-weight: bold; }
+    #bulk-delete-btn { padding: 8px 16px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; }
+    #bulk-delete-btn:disabled { background: #aaa; cursor: default; }
+    button[hx-delete] { padding: 4px 10px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; }
+    button[hx-delete]:hover { background: #bb2d3b; }
+    dialog { border-radius: 8px; padding: 24px; border: 1px solid #ccc; max-width: 400px; }
+    dialog::backdrop { background: rgba(0, 0, 0, 0.5); }
+    dialog p { margin-top: 0; }
+    dialog button { padding: 8px 16px; margin: 4px; border-radius: 4px; border: none; cursor: pointer; }
+    dialog button[type="submit"] { background: #dc3545; color: white; }
+    dialog button[type="button"] { background: #6c757d; color: white; }
+  </style>
+</head>
+<body>
+
+{% if error %}<div class="error-banner">{{ error }}</div>{% endif %}
+{% if flash %}<div class="flash-banner">{{ flash }}</div>{% endif %}
+
+<h1>qBit Pruner</h1>
+<div class="controls">
+  <div class="slider-group">
+    <label for="min-days-slider">Min inactive:</label>
+    <input type="range" id="min-days-slider" min="0" max="365" value="{{ min_days }}"
+           name="min_days"
+           hx-get="/" hx-trigger="change" hx-include="this"
+           hx-target="#torrent-table" hx-swap="outerHTML" hx-select="#torrent-table"
+           oninput="this.nextElementSibling.textContent = this.value">
+    <span>{{ min_days }}</span> days
+  </div>
+</div>
+
+<form method="post" action="/torrents/delete" id="bulk-form">
+  <div class="bulk-bar">
+    <button type="button" id="bulk-delete-btn" disabled
+            onclick="document.getElementById('confirm-modal').showModal()">
+      Delete selected (<span id="selected-count">0</span>) — <span id="selected-gb">0.00</span> GB
+    </button>
+  </div>
+
+  <table id="torrent-table">
+    <thead>
+      <tr>
+        <th><input type="checkbox" id="select-all"></th>
+        <th>Name</th>
+        <th>Size</th>
+        <th>Inactive (days)</th>
+        <th>Category</th>
+        <th>Delete</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for bucket in buckets %}
+        {% if bucket.torrents %}
+        <tr class="bucket-header">
+          <td><input type="checkbox" class="bucket-select" data-bucket="{{ bucket.label }}"></td>
+          <td colspan="5"><strong>{{ bucket.label }}</strong> ({{ bucket.torrents|length }})</td>
+        </tr>
+        {% for t in bucket.torrents %}
+          {% include "_row.html" %}
+        {% endfor %}
+        {% endif %}
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <dialog id="confirm-modal">
+    <p>Delete <span id="modal-count">0</span> torrents and their files? This cannot be undone.</p>
+    <button type="submit">Confirm Delete</button>
+    <button type="button" onclick="document.getElementById('confirm-modal').close()">Cancel</button>
+  </dialog>
+</form>
+
+<script>
+(function () {
+  function updateCounts() {
+    var checked = document.querySelectorAll('.torrent-cb:checked');
+    var count = checked.length;
+    var gb = 0;
+    checked.forEach(function (cb) { gb += parseFloat(cb.dataset.size || '0'); });
+    document.getElementById('selected-count').textContent = count;
+    document.getElementById('selected-gb').textContent = gb.toFixed(2);
+    var modalCount = document.getElementById('modal-count');
+    if (modalCount) { modalCount.textContent = count; }
+    var btn = document.getElementById('bulk-delete-btn');
+    if (btn) { btn.disabled = count === 0; }
+  }
+
+  document.body.addEventListener('htmx:afterSwap', updateCounts);
+
+  // Select-all, bucket-select and individual torrent checkboxes (all delegated)
+  document.addEventListener('change', function (e) {
+    if (e.target.id === 'select-all') {
+      document.querySelectorAll('.torrent-cb').forEach(function (cb) {
+        cb.checked = e.target.checked;
+      });
+      updateCounts();
+    } else if (e.target.classList.contains('bucket-select')) {
+      var bucket = e.target.dataset.bucket;
+      document.querySelectorAll('.torrent-cb[data-bucket="' + bucket + '"]').forEach(function (cb) {
+        cb.checked = e.target.checked;
+      });
+      updateCounts();
+    } else if (e.target.classList.contains('torrent-cb')) {
+      updateCounts();
+    }
+  });
+})();
+</script>
+
+</body>
+</html>
