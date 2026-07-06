@@ -237,3 +237,19 @@ def test_index_title_is_prunarr():
         response = client.get("/")
     assert "<title>qBit Prunarr</title>" in response.text
     assert "<h1>qBit Prunarr</h1>" in response.text
+
+
+# ---------------------------------------------------------------------------
+# Test: Size column header is "Size (GB)" and cell shows a bare number
+# (no trailing "GB" suffix, per v2 cleanup)
+# ---------------------------------------------------------------------------
+
+def test_index_size_column_format():
+    mock_instance = _make_mock_client(ALL_TORRENTS)
+    with patch("main.QBitClient", return_value=mock_instance):
+        client = TestClient(app)
+        response = client.get("/")
+    assert "<th>Size (GB)</th>" in response.text
+    # TORRENT_OLD is 10_000_000_000 bytes -> 10.0 GB, rendered bare (no "GB" suffix)
+    assert ">10.0<" in response.text
+    assert "10.0 GB" not in response.text
