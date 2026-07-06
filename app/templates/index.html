@@ -10,7 +10,6 @@
       --bg: #1f2126;
       --panel-bg: #26282e;
       --header-bg: #2a2d33;
-      --row-stripe: #24262b;
       --row-hover: #2e3138;
       --border: #34363c;
       --text: #d5d6d8;
@@ -42,7 +41,6 @@
     th.sortable::after { content: ''; margin-left: 4px; color: var(--accent); }
     th.sort-asc::after { content: '\2191'; }
     th.sort-desc::after { content: '\2193'; }
-    tbody tr:not(.bucket-header):nth-child(even) { background: var(--row-stripe); }
     tbody tr:not(.bucket-header):hover { background: var(--row-hover); }
     .bucket-header td { background: var(--header-bg); font-weight: bold; color: var(--accent); }
     #bulk-delete-btn { padding: 8px 16px; background: var(--danger); color: white; border: none; border-radius: 4px; cursor: pointer; }
@@ -185,7 +183,9 @@
     buckets.forEach(function (bucket, i) {
       var rows;
       if (dir === null) {
-        rows = defaultOrder[i] ? defaultOrder[i].rows.slice() : bucket.rows.slice();
+        rows = defaultOrder[i]
+          ? defaultOrder[i].rows.filter(function (row) { return row.isConnected; })
+          : bucket.rows.slice();
       } else {
         rows = bucket.rows.slice().sort(function (a, b) {
           var av = a.dataset[column];
@@ -226,8 +226,6 @@
       sortState.dir = 'desc';
     } else if (sortState.dir === 'desc') {
       sortState = { column: null, dir: null };
-    } else {
-      sortState.dir = 'asc';
     }
     applySort(sortState.column, sortState.dir);
     updateSortIndicators();
