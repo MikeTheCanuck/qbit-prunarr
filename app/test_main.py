@@ -194,3 +194,33 @@ def test_widget_returns_json():
     assert data["cold_torrents"] == 2
     # total size = 5GB + 10GB = 15GB
     assert data["wasted_gb"] == 15.0
+
+
+# ---------------------------------------------------------------------------
+# Test: QBIT_TAG env var overrides the default "only-for-ratio" tag filter
+# ---------------------------------------------------------------------------
+
+def test_index_uses_qbit_tag_env_var(monkeypatch):
+    monkeypatch.setenv("QBIT_TAG", "custom-tag")
+    mock_instance = _make_mock_client(ALL_TORRENTS)
+    with patch("main.QBitClient", return_value=mock_instance):
+        client = TestClient(app)
+        client.get("/")
+    mock_instance.get_torrents.assert_called_once_with("custom-tag")
+
+
+def test_index_default_tag_when_env_unset():
+    mock_instance = _make_mock_client(ALL_TORRENTS)
+    with patch("main.QBitClient", return_value=mock_instance):
+        client = TestClient(app)
+        client.get("/")
+    mock_instance.get_torrents.assert_called_once_with("only-for-ratio")
+
+
+def test_index_renders_tags_column():
+    mock_instance = _make_mock_client(ALL_TORRENTS)
+    with patch("main.QBitClient", return_value=mock_instance):
+        client = TestClient(app)
+        response = client.get("/")
+    assert "<th>Tags</th>" in response.text
+    assert "only-for-ratio" in response.text

@@ -63,6 +63,7 @@
         <th>Size</th>
         <th>Inactive (days)</th>
         <th>Category</th>
+        <th>Tags</th>
         <th>Delete</th>
       </tr>
     </thead>
@@ -71,7 +72,7 @@
         {% if bucket.torrents %}
         <tr class="bucket-header">
           <td><input type="checkbox" class="bucket-select" data-bucket="{{ bucket.label }}"></td>
-          <td colspan="5"><strong>{{ bucket.label }}</strong> ({{ bucket.torrents|length }})</td>
+          <td colspan="6"><strong>{{ bucket.label }}</strong> ({{ bucket.torrents|length }})</td>
         </tr>
         {% for t in bucket.torrents %}
           {% include "_row.html" %}

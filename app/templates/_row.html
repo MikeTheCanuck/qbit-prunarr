@@ -8,6 +8,7 @@
   <td>{{ t.size_gb }} GB</td>
   <td>{{ t.days_inactive }}</td>
   <td>{{ t.category }}</td>
+  <td>{{ t.tags }}</td>
   <td>
     <button hx-delete="/torrents/{{ t.hash }}"
             hx-target="#row-{{ t.hash }}"
