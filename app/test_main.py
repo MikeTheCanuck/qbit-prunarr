@@ -272,3 +272,17 @@ def test_index_sort_attributes_present():
     assert 'data-name="old-series.mkv"' in response.text
     assert 'data-size="10.0"' in response.text
     assert 'data-inactive="100"' in response.text
+
+
+# ---------------------------------------------------------------------------
+# Test: dark skin CSS variables are present (smoke check - full visual
+# verification happens manually in a browser, see plan's final step)
+# ---------------------------------------------------------------------------
+
+def test_index_dark_skin_applied():
+    mock_instance = _make_mock_client(ALL_TORRENTS)
+    with patch("main.QBitClient", return_value=mock_instance):
+        client = TestClient(app)
+        response = client.get("/")
+    assert "--bg: #1f2126" in response.text
+    assert "--accent: #3ba7d9" in response.text

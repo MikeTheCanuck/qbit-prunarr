@@ -6,32 +6,58 @@
   <title>qBit Prunarr</title>
   <script src="https://unpkg.com/htmx.org@2.0.3"></script>
   <style>
-    body { font-family: sans-serif; max-width: 1200px; margin: 0 auto; padding: 16px; }
-    h1 { margin-top: 0; }
-    .error-banner { background: #f8d7da; color: #842029; padding: 10px 16px; margin-bottom: 16px; border-radius: 4px; }
-    .flash-banner { background: #fff3cd; color: #664d03; padding: 10px 16px; margin-bottom: 16px; border-radius: 4px; }
-.controls { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; flex-wrap: wrap; }
-    .slider-group { display: flex; align-items: center; gap: 8px; }
+    :root {
+      --bg: #1f2126;
+      --panel-bg: #26282e;
+      --header-bg: #2a2d33;
+      --row-stripe: #24262b;
+      --row-hover: #2e3138;
+      --border: #34363c;
+      --text: #d5d6d8;
+      --text-muted: #9aa0a6;
+      --accent: #3ba7d9;
+      --accent-hover: #2f8ebf;
+      --danger: #c8302a;
+      --danger-hover: #a3241f;
+    }
+    body {
+      font-family: sans-serif;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 16px;
+      background: var(--bg);
+      color: var(--text);
+    }
+    h1 { margin-top: 0; color: var(--text); }
+    .error-banner { background: #4a1f22; color: #f5b8bb; padding: 10px 16px; margin-bottom: 16px; border-radius: 4px; }
+    .flash-banner { background: #4a3d1f; color: #f0d9a0; padding: 10px 16px; margin-bottom: 16px; border-radius: 4px; }
+    .controls { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; flex-wrap: wrap; padding: 10px 12px; background: var(--panel-bg); border: 1px solid var(--border); border-radius: 4px; }
+    .slider-group { display: flex; align-items: center; gap: 8px; color: var(--text-muted); }
     .bulk-bar { margin-bottom: 8px; }
-    table { border-collapse: collapse; width: 100%; }
-    th, td { padding: 6px 12px; text-align: left; border-bottom: 1px solid #ddd; }
-    th { background: #f8f8f8; }
-    .bucket-header td { background: #f0f0f0; font-weight: bold; }
-    #bulk-delete-btn { padding: 8px 16px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; }
-    #bulk-delete-btn:disabled { background: #aaa; cursor: default; }
-    button[hx-delete] { padding: 4px 10px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; }
-    button[hx-delete]:hover { background: #bb2d3b; }
-    dialog { border-radius: 8px; padding: 24px; border: 1px solid #ccc; max-width: 400px; }
-    dialog::backdrop { background: rgba(0, 0, 0, 0.5); }
-    dialog p { margin-top: 0; }
-    dialog button { padding: 8px 16px; margin: 4px; border-radius: 4px; border: none; cursor: pointer; }
-    dialog button[type="submit"] { background: #dc3545; color: white; }
-    dialog button[type="button"] { background: #6c757d; color: white; }
     .num { text-align: right; }
+    table { border-collapse: collapse; width: 100%; background: var(--panel-bg); }
+    th, td { padding: 6px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+    th { background: var(--header-bg); color: var(--text-muted); font-weight: 600; }
     th.sortable { cursor: pointer; user-select: none; }
-    th.sortable::after { content: ''; margin-left: 4px; }
+    th.sortable::after { content: ''; margin-left: 4px; color: var(--accent); }
     th.sort-asc::after { content: '\2191'; }
     th.sort-desc::after { content: '\2193'; }
+    tbody tr:not(.bucket-header):nth-child(even) { background: var(--row-stripe); }
+    tbody tr:not(.bucket-header):hover { background: var(--row-hover); }
+    .bucket-header td { background: var(--header-bg); font-weight: bold; color: var(--accent); }
+    #bulk-delete-btn { padding: 8px 16px; background: var(--danger); color: white; border: none; border-radius: 4px; cursor: pointer; }
+    #bulk-delete-btn:hover:not(:disabled) { background: var(--danger-hover); }
+    #bulk-delete-btn:disabled { background: #4a4d54; color: var(--text-muted); cursor: default; }
+    button[hx-delete] { padding: 4px 10px; background: var(--danger); color: white; border: none; border-radius: 4px; cursor: pointer; }
+    button[hx-delete]:hover { background: var(--danger-hover); }
+    input[type="range"] { accent-color: var(--accent); }
+    dialog { border-radius: 8px; padding: 24px; border: 1px solid var(--border); max-width: 400px; background: var(--panel-bg); color: var(--text); }
+    dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
+    dialog p { margin-top: 0; }
+    dialog button { padding: 8px 16px; margin: 4px; border-radius: 4px; border: none; cursor: pointer; }
+    dialog button[type="submit"] { background: var(--danger); color: white; }
+    dialog button[type="submit"]:hover { background: var(--danger-hover); }
+    dialog button[type="button"] { background: #4a4d54; color: var(--text); }
   </style>
 </head>
 <body>
