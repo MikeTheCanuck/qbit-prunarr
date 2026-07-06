@@ -249,7 +249,26 @@ def test_index_size_column_format():
     with patch("main.QBitClient", return_value=mock_instance):
         client = TestClient(app)
         response = client.get("/")
-    assert "<th>Size (GB)</th>" in response.text
+    assert '<th class="sortable" data-sort="size">Size (GB)</th>' in response.text
     # TORRENT_OLD is 10_000_000_000 bytes -> 10.0 GB, rendered bare (no "GB" suffix)
     assert ">10.0<" in response.text
     assert "10.0 GB" not in response.text
+
+
+# ---------------------------------------------------------------------------
+# Test: sortable column headers and row data-attributes are present
+# (client-side sort JS itself is verified manually in a browser - no JS
+# test harness in this stack)
+# ---------------------------------------------------------------------------
+
+def test_index_sort_attributes_present():
+    mock_instance = _make_mock_client(ALL_TORRENTS)
+    with patch("main.QBitClient", return_value=mock_instance):
+        client = TestClient(app)
+        response = client.get("/")
+    assert 'data-sort="name"' in response.text
+    assert 'data-sort="size"' in response.text
+    assert 'data-sort="inactive"' in response.text
+    assert 'data-name="old-series.mkv"' in response.text
+    assert 'data-size="10.0"' in response.text
+    assert 'data-inactive="100"' in response.text

@@ -28,6 +28,10 @@
     dialog button[type="submit"] { background: #dc3545; color: white; }
     dialog button[type="button"] { background: #6c757d; color: white; }
     .num { text-align: right; }
+    th.sortable { cursor: pointer; user-select: none; }
+    th.sortable::after { content: ''; margin-left: 4px; }
+    th.sort-asc::after { content: '\2191'; }
+    th.sort-desc::after { content: '\2193'; }
   </style>
 </head>
 <body>
@@ -60,9 +64,9 @@
     <thead>
       <tr>
         <th><input type="checkbox" id="select-all"></th>
-        <th>Name</th>
-        <th>Size (GB)</th>
-        <th>Inactive (days)</th>
+        <th class="sortable" data-sort="name">Name</th>
+        <th class="sortable" data-sort="size">Size (GB)</th>
+        <th class="sortable" data-sort="inactive">Inactive (days)</th>
         <th>Category</th>
         <th>Tags</th>
         <th>Delete</th>
@@ -124,6 +128,92 @@
       updateCounts();
     }
   });
+
+  var sortState = { column: null, dir: null };
+  var defaultOrder = null;
+
+  function getBuckets() {
+    var tbody = document.querySelector('#torrent-table tbody');
+    if (!tbody) { return []; }
+    var buckets = [];
+    var current = null;
+    Array.prototype.forEach.call(tbody.children, function (row) {
+      if (row.classList.contains('bucket-header')) {
+        current = { header: row, rows: [] };
+        buckets.push(current);
+      } else if (current) {
+        current.rows.push(row);
+      }
+    });
+    return buckets;
+  }
+
+  function captureDefaultOrder() {
+    defaultOrder = getBuckets().map(function (bucket) {
+      return { header: bucket.header, rows: bucket.rows.slice() };
+    });
+  }
+
+  function applySort(column, dir) {
+    var buckets = getBuckets();
+    buckets.forEach(function (bucket, i) {
+      var rows;
+      if (dir === null) {
+        rows = defaultOrder[i] ? defaultOrder[i].rows.slice() : bucket.rows.slice();
+      } else {
+        rows = bucket.rows.slice().sort(function (a, b) {
+          var av = a.dataset[column];
+          var bv = b.dataset[column];
+          if (column === 'name') {
+            return dir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
+          }
+          av = parseFloat(av);
+          bv = parseFloat(bv);
+          return dir === 'asc' ? av - bv : bv - av;
+        });
+      }
+      var anchor = bucket.header;
+      rows.forEach(function (row) {
+        anchor.after(row);
+        anchor = row;
+      });
+    });
+  }
+
+  function updateSortIndicators() {
+    document.querySelectorAll('th[data-sort]').forEach(function (th) {
+      th.classList.remove('sort-asc', 'sort-desc');
+      if (th.dataset.sort === sortState.column) {
+        if (sortState.dir === 'asc') { th.classList.add('sort-asc'); }
+        if (sortState.dir === 'desc') { th.classList.add('sort-desc'); }
+      }
+    });
+  }
+
+  document.addEventListener('click', function (e) {
+    var th = e.target.closest('th[data-sort]');
+    if (!th) { return; }
+    var column = th.dataset.sort;
+    if (sortState.column !== column) {
+      sortState = { column: column, dir: 'asc' };
+    } else if (sortState.dir === 'asc') {
+      sortState.dir = 'desc';
+    } else if (sortState.dir === 'desc') {
+      sortState = { column: null, dir: null };
+    } else {
+      sortState.dir = 'asc';
+    }
+    applySort(sortState.column, sortState.dir);
+    updateSortIndicators();
+  });
+
+  document.body.addEventListener('htmx:afterSwap', function () {
+    sortState = { column: null, dir: null };
+    captureDefaultOrder();
+    updateSortIndicators();
+  });
+
+  captureDefaultOrder();
 })();
 </script>
 

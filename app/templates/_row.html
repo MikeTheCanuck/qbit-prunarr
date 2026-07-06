@@ -1,4 +1,4 @@
-<tr id="row-{{ t.hash }}">
+<tr id="row-{{ t.hash }}" data-name="{{ t.name }}" data-size="{{ t.size_gb }}" data-inactive="{{ t.days_inactive }}">
   <td>
     <input type="checkbox" name="hashes" value="{{ t.hash }}"
            class="torrent-cb" data-size="{{ t.size_gb }}"
