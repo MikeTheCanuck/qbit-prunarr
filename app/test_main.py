@@ -36,6 +36,18 @@ TORRENT_OLD = {
 
 ALL_TORRENTS = [TORRENT_FRESH, TORRENT_OLD]
 
+# A torrent that's been inactive for 150 days (older than TORRENT_OLD)
+TORRENT_OLDER_STILL = {
+    "name": "ancient-movie.mkv",
+    "hash": "hash003",
+    "last_activity": int(NOW - 150 * 86400),
+    "added_on": int(NOW - 300 * 86400),
+    "size": 8_000_000_000,
+    "uploaded": 16_000_000_000,
+    "tags": "only-for-ratio",
+    "category": "",
+}
+
 
 @pytest.fixture(autouse=True)
 def set_env(monkeypatch):
@@ -88,6 +100,23 @@ def test_index_min_days_filter():
     assert "old-series.mkv" in response.text
     # fresh-file is 5 days inactive — filtered out
     assert "fresh-file.mkv" not in response.text
+
+
+# ---------------------------------------------------------------------------
+# Test: GET / — default order: within a bucket, most-stale-first (ascending
+# last_activity) — this is the ordering bug Mike spotted in v1.
+# ---------------------------------------------------------------------------
+
+def test_index_default_order_within_bucket():
+    # TORRENT_OLD (100d) and TORRENT_OLDER_STILL (150d) both land in the
+    # 90-180d bucket. TORRENT_OLDER_STILL has the smaller last_activity
+    # (older timestamp = longer inactive) and must render first.
+    mock_instance = _make_mock_client([TORRENT_OLD, TORRENT_OLDER_STILL])
+    with patch("main.QBitClient", return_value=mock_instance):
+        client = TestClient(app)
+        response = client.get("/?min_days=30")
+    assert response.status_code == 200
+    assert response.text.index("ancient-movie.mkv") < response.text.index("old-series.mkv")
 
 
 # ---------------------------------------------------------------------------

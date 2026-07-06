@@ -85,6 +85,7 @@ async def index(
 
     enriched = [_enrich(t) for t in raw_torrents]
     filtered = [t for t in enriched if t["days_inactive"] >= min_days]
+    filtered.sort(key=lambda t: t["last_activity"])
     buckets = _bucket_torrents(filtered)
     total_gb = round(sum(t["size"] for t in filtered) / 1e9, 2)
 
