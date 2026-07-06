@@ -224,3 +224,16 @@ def test_index_renders_tags_column():
         response = client.get("/")
     assert "<th>Tags</th>" in response.text
     assert "only-for-ratio" in response.text
+
+
+# ---------------------------------------------------------------------------
+# Test: page title and heading say "qBit Prunarr" (renamed from "qBit Pruner")
+# ---------------------------------------------------------------------------
+
+def test_index_title_is_prunarr():
+    mock_instance = _make_mock_client(ALL_TORRENTS)
+    with patch("main.QBitClient", return_value=mock_instance):
+        client = TestClient(app)
+        response = client.get("/")
+    assert "<title>qBit Prunarr</title>" in response.text
+    assert "<h1>qBit Prunarr</h1>" in response.text
