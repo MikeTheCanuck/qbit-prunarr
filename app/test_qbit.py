@@ -108,3 +108,32 @@ def test_close_method_closes_session(client: QBitClient):
     assert not client._session.is_closed
     client.close()
     assert client._session.is_closed
+
+
+# ---------------------------------------------------------------------------
+# Test 6: get_all_content_paths() — returns all content_path fields
+# ---------------------------------------------------------------------------
+
+def test_get_all_content_paths(client: QBitClient, httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        method="GET",
+        url=f"{BASE_URL}/api/v2/torrents/info",
+        json=[
+            {"name": "A", "hash": "h1", "content_path": "/downloads/completed/a.mkv"},
+            {"name": "B", "hash": "h2", "content_path": "/downloads/completed/b.mkv"},
+        ],
+    )
+
+    paths = client.get_all_content_paths()
+
+    assert paths == {"/downloads/completed/a.mkv", "/downloads/completed/b.mkv"}
+
+
+def test_get_all_content_paths_skips_missing_field(client: QBitClient, httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        method="GET",
+        url=f"{BASE_URL}/api/v2/torrents/info",
+        json=[{"name": "A", "hash": "h1"}],
+    )
+
+    assert client.get_all_content_paths() == set()
