@@ -1518,16 +1518,15 @@ when the user clicks delete.
 
 ```python
 # append to app/test_orphans_routes.py
+# Also add this import alongside the existing "from main import app" at the
+# top of the file — these tests reach into main._scan_cache directly:
+#   import main
 
 def test_delete_single_orphan_after_reverify(tmp_path):
     import os
     path = os.path.join(str(tmp_path), "torrents", "seed.mkv")
     _make_file(path)
 
-    empty_clients = dict(
-        get_all_content_paths=set(), get_all_episode_paths=set(),
-        get_all_movie_paths=set(),
-    )
     with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
          patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set())), \
          patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set())), \
