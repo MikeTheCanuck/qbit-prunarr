@@ -8,7 +8,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from inode_scan import scan
-from orphans import OrphanCandidate, classify_download_orphans, classify_media_orphans
+from orphans import OrphanCandidate, classify_download_orphans, classify_media_orphans, delete_orphan
 from pathmap import to_relative
 from plex import PlexClient
 from qbit import QBitClient
@@ -31,6 +31,13 @@ TV_SUBDIRS = {"media/tv", "media/tv-no-backup"}
 DOWNLOAD_SUBDIRS = ["torrents", "usenet"]
 
 _scan_cache: dict[int, OrphanCandidate] = {}
+
+
+def _current_data_root() -> str:
+    """Read DATA_ROOT live from the environment (same pattern as run_scan)
+    rather than the module-level constant, which goes stale under test
+    fixtures that set DATA_ROOT after import."""
+    return os.environ.get("DATA_ROOT", DATA_ROOT)
 
 
 def _get_client() -> QBitClient:
@@ -264,3 +271,69 @@ async def orphans_scan(request: Request):
             "orphans.html",
             {"candidates": [], "error": "Scan failed — check service connectivity"},
         )
+
+
+def _reverify(inode: int) -> OrphanCandidate | None:
+    """Re-run the scan and return the fresh candidate for inode, or None
+    if it's no longer flagged as an orphan.
+
+    This closes the race between a page scan and a delete click: Sonarr
+    could grab a replacement file, or a torrent could resume, in between.
+    """
+    fresh = run_scan()
+    for c in fresh:
+        if c.inode == inode:
+            return c
+    return None
+
+
+@app.delete("/orphans/{inode}")
+async def delete_single_orphan(inode: int):
+    if inode not in _scan_cache:
+        return Response(status_code=200, content="")
+
+    try:
+        fresh = _reverify(inode)
+    except Exception as e:
+        return Response(
+            status_code=200,
+            media_type="text/html",
+            content=f'<tr id="orphan-row-{inode}"><td colspan="5" style="color:red">Re-verify failed: {e}</td></tr>',
+        )
+
+    if fresh is None:
+        return Response(
+            status_code=200,
+            media_type="text/html",
+            content=f'<tr id="orphan-row-{inode}"><td colspan="5">No longer an orphan — skipped</td></tr>',
+        )
+
+    try:
+        delete_orphan(_current_data_root(), fresh.paths[0])
+        return Response(status_code=200, content="")
+    except OSError as e:
+        return Response(
+            status_code=200,
+            media_type="text/html",
+            content=f'<tr id="orphan-row-{inode}"><td colspan="5" style="color:red">Delete failed: {e}</td></tr>',
+        )
+
+
+@app.post("/orphans/delete")
+async def bulk_delete_orphans(inodes: list[int] = Form(...)):
+    try:
+        fresh_by_inode = {c.inode: c for c in run_scan()}
+    except Exception:
+        return RedirectResponse(url="/orphans", status_code=302)
+
+    data_root = _current_data_root()
+    for inode in inodes:
+        candidate = fresh_by_inode.get(inode)
+        if candidate is None:
+            continue
+        try:
+            delete_orphan(data_root, candidate.paths[0])
+        except OSError:
+            continue
+
+    return RedirectResponse(url="/orphans", status_code=302)

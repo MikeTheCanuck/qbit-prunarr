@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+import main
 from main import app
 
 
@@ -87,3 +88,72 @@ def test_scan_with_unreachable_apis_flags_nothing(tmp_path):
     assert response.status_code == 200
     assert "movie.mkv" not in response.text
     assert "seed.mkv" not in response.text
+
+
+def test_delete_single_orphan_after_reverify(tmp_path):
+    import os
+    path = os.path.join(str(tmp_path), "torrents", "seed.mkv")
+    _make_file(path)
+
+    with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
+         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set())), \
+         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set())), \
+         patch("main.PlexClient", return_value=_mock_client(
+             get_all_movie_paths=set(), get_all_episode_paths=set()
+         )):
+        client = TestClient(app)
+        client.post("/orphans/scan")  # populate _scan_cache
+        inode = next(iter(main._scan_cache))
+        response = client.delete(f"/orphans/{inode}")
+
+    assert response.status_code == 200
+    assert not os.path.exists(path)
+
+
+def test_delete_skips_if_no_longer_orphan(tmp_path):
+    import os
+    path = os.path.join(str(tmp_path), "torrents", "seed.mkv")
+    _make_file(path)
+
+    with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
+         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set())), \
+         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set())), \
+         patch("main.PlexClient", return_value=_mock_client(
+             get_all_movie_paths=set(), get_all_episode_paths=set()
+         )):
+        client = TestClient(app)
+        client.post("/orphans/scan")
+        inode = next(iter(main._scan_cache))
+
+        # Between scan and delete, qBit now reports this path as active.
+        with patch("main.QBitClient", return_value=_mock_client(
+            get_all_content_paths={"torrents/seed.mkv"}
+        )):
+            response = client.delete(f"/orphans/{inode}")
+
+    assert response.status_code == 200
+    assert os.path.exists(path)
+    assert "no longer" in response.text.lower()
+
+
+def test_bulk_delete_orphans(tmp_path):
+    import os
+    path_a = os.path.join(str(tmp_path), "torrents", "a.mkv")
+    path_b = os.path.join(str(tmp_path), "torrents", "b.mkv")
+    _make_file(path_a)
+    _make_file(path_b)
+
+    with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
+         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set())), \
+         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set())), \
+         patch("main.PlexClient", return_value=_mock_client(
+             get_all_movie_paths=set(), get_all_episode_paths=set()
+         )):
+        client = TestClient(app, follow_redirects=False)
+        client.post("/orphans/scan")
+        inodes = list(main._scan_cache.keys())
+        response = client.post("/orphans/delete", data={"inodes": [str(i) for i in inodes]})
+
+    assert response.status_code == 302
+    assert not os.path.exists(path_a)
+    assert not os.path.exists(path_b)
