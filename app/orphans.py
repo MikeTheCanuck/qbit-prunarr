@@ -84,3 +84,21 @@ def classify_media_orphans(
                 )
             )
     return candidates
+
+
+def delete_orphan(data_root: str, relative_path: str) -> None:
+    """Delete an orphan file, then prune now-empty parent dirs up to data_root."""
+    full_path = os.path.join(data_root, relative_path)
+    os.remove(full_path)
+
+    root = os.path.abspath(data_root)
+    parent = os.path.dirname(full_path)
+    while os.path.abspath(parent) != root:
+        # Don't delete direct children of data_root
+        if os.path.dirname(os.path.abspath(parent)) == root:
+            break
+        try:
+            os.rmdir(parent)
+        except OSError:
+            break
+        parent = os.path.dirname(parent)

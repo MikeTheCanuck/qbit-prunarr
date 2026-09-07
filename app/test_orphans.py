@@ -1,8 +1,10 @@
 """Tests for orphan classification logic."""
 import os
 
+import pytest
+
 from inode_scan import ScanResult
-from orphans import OrphanCandidate, classify_download_orphans, classify_media_orphans
+from orphans import OrphanCandidate, classify_download_orphans, classify_media_orphans, delete_orphan
 
 
 def _make_file(path: str, content: bytes = b"x" * 100) -> None:
@@ -126,3 +128,48 @@ def test_size_bytes_reflects_real_file_size(tmp_path):
     candidates = classify_download_orphans(result, root, qbit_paths=set())
 
     assert candidates[0].size_bytes == 12345
+
+
+# --- delete_orphan ---------------------------------------------------
+
+def test_delete_orphan_removes_file(tmp_path):
+    root = str(tmp_path)
+    path = os.path.join(root, "torrents", "seed.mkv")
+    _make_file(path)
+
+    delete_orphan(root, "torrents/seed.mkv")
+
+    assert not os.path.exists(path)
+
+
+def test_delete_orphan_prunes_empty_parent_dirs(tmp_path):
+    root = str(tmp_path)
+    path = os.path.join(root, "torrents", "Some Release", "seed.mkv")
+    _make_file(path)
+
+    delete_orphan(root, "torrents/Some Release/seed.mkv")
+
+    assert not os.path.exists(os.path.join(root, "torrents", "Some Release"))
+    # data_root itself and its direct "torrents" child must not be touched
+    assert os.path.isdir(os.path.join(root, "torrents"))
+
+
+def test_delete_orphan_stops_pruning_at_nonempty_dir(tmp_path):
+    root = str(tmp_path)
+    _make_file(os.path.join(root, "torrents", "Pack", "keep.mkv"))
+    target = os.path.join(root, "torrents", "Pack", "seed.mkv")
+    _make_file(target)
+
+    delete_orphan(root, "torrents/Pack/seed.mkv")
+
+    assert not os.path.exists(target)
+    assert os.path.isdir(os.path.join(root, "torrents", "Pack"))
+    assert os.path.exists(os.path.join(root, "torrents", "Pack", "keep.mkv"))
+
+
+def test_delete_orphan_missing_file_raises(tmp_path):
+    root = str(tmp_path)
+    os.makedirs(os.path.join(root, "torrents"))
+
+    with pytest.raises(OSError):
+        delete_orphan(root, "torrents/does-not-exist.mkv")
