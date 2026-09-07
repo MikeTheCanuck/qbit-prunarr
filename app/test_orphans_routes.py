@@ -62,6 +62,16 @@ def test_scan_finds_download_orphan(tmp_path):
     assert "unlinked download" in response.text
 
 
+def test_scan_returns_200_with_inline_error_on_unexpected_failure(tmp_path):
+    with patch("main.scan", side_effect=RuntimeError("disk fell off")):
+        client = TestClient(app)
+        response = client.post("/orphans/scan")
+
+    assert response.status_code == 200
+    assert "error-banner" in response.text
+    assert "Scan failed" in response.text
+
+
 def test_scan_with_unreachable_apis_flags_nothing(tmp_path):
     import os
     _make_file(os.path.join(str(tmp_path), "media", "movies", "movie.mkv"))

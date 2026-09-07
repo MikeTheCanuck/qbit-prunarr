@@ -239,10 +239,28 @@ def _enrich_candidate(c: OrphanCandidate) -> dict:
 
 @app.get("/orphans", response_class=HTMLResponse)
 async def orphans_page(request: Request):
-    return templates.TemplateResponse(request, "orphans.html", {"candidates": []})
+    try:
+        return templates.TemplateResponse(
+            request, "orphans.html", {"candidates": [], "error": None}
+        )
+    except Exception:
+        return templates.TemplateResponse(
+            request,
+            "orphans.html",
+            {"candidates": [], "error": "Failed to load orphans page"},
+        )
 
 
 @app.post("/orphans/scan", response_class=HTMLResponse)
 async def orphans_scan(request: Request):
-    candidates = [_enrich_candidate(c) for c in run_scan()]
-    return templates.TemplateResponse(request, "orphans.html", {"candidates": candidates})
+    try:
+        candidates = [_enrich_candidate(c) for c in run_scan()]
+        return templates.TemplateResponse(
+            request, "orphans.html", {"candidates": candidates, "error": None}
+        )
+    except Exception:
+        return templates.TemplateResponse(
+            request,
+            "orphans.html",
+            {"candidates": [], "error": "Scan failed — check service connectivity"},
+        )
