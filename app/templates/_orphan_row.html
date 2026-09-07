@@ -1,0 +1,14 @@
+<tr id="orphan-row-{{ c.inode }}">
+  <td><input type="checkbox" name="inodes" value="{{ c.inode }}" class="orphan-cb"></td>
+  <td>{{ c.display_path }}{% if c.extra_paths > 0 %} (+{{ c.extra_paths }} more){% endif %}</td>
+  <td>{{ c.size_gb }} GB</td>
+  <td>{{ c.category }}</td>
+  <td>
+    <button hx-delete="/orphans/{{ c.inode }}"
+            hx-target="#orphan-row-{{ c.inode }}"
+            hx-swap="outerHTML"
+            hx-confirm="Delete {{ c.display_path }}?">
+      Delete
+    </button>
+  </td>
+</tr>

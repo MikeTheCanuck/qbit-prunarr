@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Orphan Trawler</title>
+  <script src="https://unpkg.com/htmx.org@2.0.3"></script>
+  <style>
+    body { font-family: sans-serif; max-width: 1200px; margin: 0 auto; padding: 16px; }
+    h1 { margin-top: 0; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { padding: 6px 12px; text-align: left; border-bottom: 1px solid #ddd; }
+    th { background: #f8f8f8; }
+    #scan-btn { padding: 8px 16px; background: #0d6efd; color: white; border: none; border-radius: 4px; cursor: pointer; }
+    #bulk-delete-btn { padding: 8px 16px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; }
+    #bulk-delete-btn:disabled { background: #aaa; cursor: default; }
+    button[hx-delete] { padding: 4px 10px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; }
+  </style>
+</head>
+<body>
+
+<h1>Orphan Trawler</h1>
+<button id="scan-btn" hx-post="/orphans/scan" hx-target="#orphan-table" hx-swap="outerHTML" hx-select="#orphan-table">
+  Scan Now
+</button>
+
+<form method="post" action="/orphans/delete" id="bulk-form">
+  <table id="orphan-table">
+    <thead>
+      <tr>
+        <th><input type="checkbox" id="select-all"></th>
+        <th>Path</th>
+        <th>Size</th>
+        <th>Category</th>
+        <th>Delete</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for c in candidates %}
+        {% include "_orphan_row.html" %}
+      {% endfor %}
+    </tbody>
+  </table>
+</form>
+
+</body>
+</html>

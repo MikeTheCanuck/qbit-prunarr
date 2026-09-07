@@ -7,7 +7,13 @@ from fastapi import FastAPI, Form, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
+from inode_scan import scan
+from orphans import OrphanCandidate, classify_download_orphans, classify_media_orphans
+from pathmap import to_relative
+from plex import PlexClient
 from qbit import QBitClient
+from radarr import RadarrClient
+from sonarr import SonarrClient
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
@@ -18,6 +24,13 @@ BUCKETS = [
     ("30–90d", 30, 90),
     ("0–30d", 0, 30),
 ]
+
+DATA_ROOT = os.environ.get("DATA_ROOT", "/data")
+MEDIA_SUBDIRS = ["media/movies", "media/movies-no-backup", "media/tv", "media/tv-no-backup"]
+TV_SUBDIRS = {"media/tv", "media/tv-no-backup"}
+DOWNLOAD_SUBDIRS = ["torrents", "usenet"]
+
+_scan_cache: dict[int, OrphanCandidate] = {}
 
 
 def _get_client() -> QBitClient:
@@ -138,3 +151,98 @@ async def widget():
         return JSONResponse({"cold_torrents": len(torrents), "wasted_gb": wasted_gb})
     except Exception:
         return JSONResponse({"cold_torrents": 0, "wasted_gb": 0.0})
+
+
+def _safe(fn):
+    """Call fn(), returning None (instead of raising) on any failure — the
+    fail-closed contract: a None result means the caller must treat every
+    file that would need this data as 'keep, uncertain'."""
+    try:
+        return fn()
+    except Exception:
+        return None
+
+
+def _fetch_qbit_paths() -> set[str]:
+    with _get_client() as client:
+        client.login()
+        return client.get_all_content_paths()
+
+
+def _fetch_sonarr_paths() -> set[str]:
+    with SonarrClient(os.environ["SONARR_URL"], os.environ["SONARR_API_KEY"]) as client:
+        return client.get_all_episode_paths()
+
+
+def _fetch_radarr_paths() -> set[str]:
+    with RadarrClient(os.environ["RADARR_URL"], os.environ["RADARR_API_KEY"]) as client:
+        return client.get_all_movie_paths()
+
+
+def _fetch_plex_movie_paths() -> set[str]:
+    with PlexClient(os.environ["PLEX_URL"], os.environ["PLEX_TOKEN"]) as client:
+        return client.get_all_movie_paths()
+
+
+def _fetch_plex_episode_paths() -> set[str]:
+    with PlexClient(os.environ["PLEX_URL"], os.environ["PLEX_TOKEN"]) as client:
+        return client.get_all_episode_paths()
+
+
+def run_scan() -> list[OrphanCandidate]:
+    """Scan the filesystem and classify orphans against every external API."""
+    data_root = os.environ.get("DATA_ROOT", DATA_ROOT)
+    result = scan(data_root, MEDIA_SUBDIRS, DOWNLOAD_SUBDIRS)
+
+    qbit_prefix = os.environ.get("QBIT_PATH_PREFIX", "")
+    raw_qbit = _safe(_fetch_qbit_paths)
+    qbit_paths = {to_relative(p, qbit_prefix) for p in raw_qbit} if raw_qbit is not None else None
+
+    sonarr_prefix = os.environ.get("SONARR_PATH_PREFIX", "")
+    raw_sonarr = _safe(_fetch_sonarr_paths)
+    sonarr_paths = {to_relative(p, sonarr_prefix) for p in raw_sonarr} if raw_sonarr is not None else None
+
+    radarr_prefix = os.environ.get("RADARR_PATH_PREFIX", "")
+    raw_radarr = _safe(_fetch_radarr_paths)
+    radarr_paths = {to_relative(p, radarr_prefix) for p in raw_radarr} if raw_radarr is not None else None
+
+    plex_prefix = os.environ.get("PLEX_PATH_PREFIX", "")
+    raw_plex_movies = _safe(_fetch_plex_movie_paths)
+    plex_movie_paths = (
+        {to_relative(p, plex_prefix) for p in raw_plex_movies} if raw_plex_movies is not None else None
+    )
+    raw_plex_episodes = _safe(_fetch_plex_episode_paths)
+    plex_episode_paths = (
+        {to_relative(p, plex_prefix) for p in raw_plex_episodes} if raw_plex_episodes is not None else None
+    )
+
+    candidates = classify_download_orphans(result, data_root, qbit_paths)
+    candidates += classify_media_orphans(
+        result, data_root, TV_SUBDIRS, sonarr_paths, radarr_paths, plex_episode_paths, plex_movie_paths
+    )
+
+    _scan_cache.clear()
+    for c in candidates:
+        _scan_cache[c.inode] = c
+    return candidates
+
+
+def _enrich_candidate(c: OrphanCandidate) -> dict:
+    return {
+        "inode": c.inode,
+        "display_path": c.paths[0],
+        "extra_paths": len(c.paths) - 1,
+        "category": c.category,
+        "size_gb": round(c.size_bytes / 1e9, 2),
+    }
+
+
+@app.get("/orphans", response_class=HTMLResponse)
+async def orphans_page(request: Request):
+    return templates.TemplateResponse(request, "orphans.html", {"candidates": []})
+
+
+@app.post("/orphans/scan", response_class=HTMLResponse)
+async def orphans_scan(request: Request):
+    candidates = [_enrich_candidate(c) for c in run_scan()]
+    return templates.TemplateResponse(request, "orphans.html", {"candidates": candidates})
