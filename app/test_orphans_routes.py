@@ -172,6 +172,37 @@ def test_multifile_torrent_does_not_make_qbit_look_unusable(tmp_path):
     assert "unusable" not in region.lower()
 
 
+def test_qbit_status_ignores_usenet_only_orphans(tmp_path):
+    """A usenet-only orphan (no dedicated usenet client exists to judge it)
+    must not make a correctly-configured qBittorrent look 'unusable' just
+    because its paths don't cover a subdir qBittorrent was never
+    responsible for in the first place."""
+    import os
+    root = str(tmp_path)
+    media_path = os.path.join(root, "media", "movies", "Movie.mkv")
+    torrent_path = os.path.join(root, "torrents", "Movie.release.mkv")
+    os.makedirs(os.path.dirname(media_path), exist_ok=True)
+    os.makedirs(os.path.dirname(torrent_path), exist_ok=True)
+    with open(media_path, "wb") as f:
+        f.write(b"x" * 1000)
+    os.link(media_path, torrent_path)
+    _make_file(os.path.join(root, "usenet", "stale.mkv"))
+
+    with patch("main.QBitClient", return_value=_mock_client(
+             get_all_content_paths={"torrents/Movie.release.mkv"})), \
+         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set())), \
+         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set())), \
+         patch("main.PlexClient", return_value=_mock_client(
+             get_all_movie_paths=set(), get_all_episode_paths=set()
+         )):
+        client = TestClient(app)
+        response = client.post("/orphans/scan")
+
+    region = _swapped_region(response.text)
+    assert "qBittorrent: ok" in region
+    assert "stale.mkv" in region
+
+
 # --- per-service status line reaches the browser (Fix 3) ---------------
 
 def test_scan_reports_unreachable_service_inside_swapped_region(tmp_path):
@@ -285,3 +316,30 @@ def test_bulk_delete_orphans(tmp_path):
     assert response.status_code == 302
     assert not os.path.exists(path_a)
     assert not os.path.exists(path_b)
+
+
+def test_bulk_delete_reports_failures_via_flash_instead_of_silently_dropping_them(tmp_path):
+    """Unlike single-delete (which shows an inline error row), the old bulk
+    path caught OSError/ValueError per item and just continued — a user
+    could submit a batch, have every delete fail, and see a plain redirect
+    with no indication anything went wrong."""
+    import os
+    path_a = os.path.join(str(tmp_path), "torrents", "a.mkv")
+    _make_file(path_a)
+
+    with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
+         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set())), \
+         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set())), \
+         patch("main.PlexClient", return_value=_mock_client(
+             get_all_movie_paths=set(), get_all_episode_paths=set()
+         )):
+        client = TestClient(app, follow_redirects=False)
+        client.post("/orphans/scan")
+        inodes = list(main._scan_cache.keys())
+
+        with patch("main.delete_orphan", side_effect=OSError("boom")):
+            response = client.post("/orphans/delete", data={"inodes": [str(i) for i in inodes]})
+
+    assert response.status_code == 302
+    assert "flash=" in response.headers["location"]
+    assert os.path.exists(path_a)

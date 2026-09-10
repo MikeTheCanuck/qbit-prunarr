@@ -48,16 +48,26 @@ def path_tracked(path: str, tracked: set[str]) -> bool:
     tracked entry) keeps this O(depth) instead of O(len(tracked)), and it
     can't produce the classic `startswith` false positive where
     "torrents/Pack2/a.mkv" looks like it lives under "torrents/Pack".
+
+    A tracked entry of "" (a service's content_path normalizing to the
+    shared root itself, e.g. via a wrong-but-exact `*_PATH_PREFIX` or a
+    "no subfolder" single-file torrent) has to match every path — every
+    ancestor chain terminates at "" — deliberately, since the alternative
+    is a live-seeding file's own root-level entry never matching and
+    getting deleted as a false-positive orphan. That means such an entry
+    disables orphan detection for the whole subtree rather than just its
+    one file; failing toward "detect nothing" instead of "delete
+    something live" is the same fail-closed direction this module already
+    takes everywhere else.
     """
     current = path
-    while current:
-        if current in tracked or current + "/" in tracked:
+    while True:
+        if current in tracked or (current and current + "/" in tracked):
             return True
-        parent = os.path.dirname(current)
-        if parent == current:
+        if not current:
             return False
-        current = parent
-    return False
+        parent = os.path.dirname(current)
+        current = parent if parent != current else ""
 
 
 def classify_download_orphans(result, data_root: str, qbit_paths: set[str] | None) -> list[OrphanCandidate]:
@@ -78,6 +88,19 @@ def classify_download_orphans(result, data_root: str, qbit_paths: set[str] | Non
     return candidates
 
 
+def is_tv_path(path: str, tv_subdirs: set[str]) -> bool:
+    """True if `path` lives under one of `tv_subdirs` (vs. a movie subdir).
+
+    The single shared TV/movie test — main.py's per-service overlap check
+    needs the same routing decision classify_media_orphans makes below, and
+    two independent copies previously used different separators (this
+    module's `os.sep` vs. main.py's hardcoded "/"), which agree only
+    because this deployment is POSIX-only; a shared function makes that
+    agreement structural instead of coincidental.
+    """
+    return any(path == sub or path.startswith(sub + "/") for sub in tv_subdirs)
+
+
 def classify_media_orphans(
     result,
     data_root: str,
@@ -96,11 +119,7 @@ def classify_media_orphans(
     """
     candidates = []
     for inode, paths in result.media_only.items():
-        is_tv = any(
-            p.startswith(tv_subdir + os.sep)
-            for p in paths
-            for tv_subdir in tv_subdirs
-        )
+        is_tv = any(is_tv_path(p, tv_subdirs) for p in paths)
         arr_paths = sonarr_paths if is_tv else radarr_paths
         plex_paths = plex_episode_paths if is_tv else plex_movie_paths
         if arr_paths is None or plex_paths is None:

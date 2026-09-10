@@ -4,7 +4,14 @@ import os
 import pytest
 
 from inode_scan import ScanResult
-from orphans import OrphanCandidate, classify_download_orphans, classify_media_orphans, delete_orphan
+from orphans import (
+    OrphanCandidate,
+    classify_download_orphans,
+    classify_media_orphans,
+    delete_orphan,
+    is_tv_path,
+    path_tracked,
+)
 
 
 def _make_file(path: str, content: bytes = b"x" * 100) -> None:
@@ -68,6 +75,25 @@ def test_multifile_torrent_dir_with_trailing_slash_covers_its_files(tmp_path):
     assert candidates == []
 
 
+def test_empty_string_tracked_entry_covers_every_path(tmp_path):
+    """A service reporting its content_path as exactly its own
+    *_PATH_PREFIX normalizes to "" — every ancestor chain terminates at
+    "", so this has to match everything rather than nothing, or a
+    live-seeding file with this exact layout gets deleted as a false
+    positive orphan (the fail-closed direction, not the dangerous one)."""
+    root = str(tmp_path)
+    _make_file(os.path.join(root, "torrents", "seed.mkv"))
+    result = ScanResult(download_only={1005: ["torrents/seed.mkv"]})
+
+    candidates = classify_download_orphans(result, root, qbit_paths={""})
+
+    assert candidates == []
+
+
+def test_path_tracked_empty_tracked_set_matches_nothing():
+    assert path_tracked("torrents/seed.mkv", set()) is False
+
+
 def test_sibling_dir_with_shared_name_prefix_is_still_an_orphan(tmp_path):
     """'torrents/Pack2/a.mkv' must NOT be considered covered by 'torrents/Pack'."""
     root = str(tmp_path)
@@ -90,6 +116,19 @@ def test_qbit_unreachable_fails_closed(tmp_path):
 
 
 # --- classify_media_orphans ----------------------------------------------
+
+def test_is_tv_path_matches_subdir_and_nested_files():
+    tv_subdirs = {"media/tv", "media/tv-no-backup"}
+    assert is_tv_path("media/tv/Show/ep.mkv", tv_subdirs) is True
+    assert is_tv_path("media/tv-no-backup/Show/ep.mkv", tv_subdirs) is True
+    assert is_tv_path("media/movies/Movie/movie.mkv", tv_subdirs) is False
+
+
+def test_is_tv_path_does_not_prefix_match_a_similar_subdir_name():
+    """'media/tv2' must not be treated as inside 'media/tv'."""
+    assert is_tv_path("media/tv2/something.mkv", {"media/tv"}) is False
+
+
 
 def test_movie_confirmed_by_radarr_and_plex_is_kept(tmp_path):
     root = str(tmp_path)

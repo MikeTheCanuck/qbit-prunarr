@@ -2,13 +2,21 @@
 import os
 import time
 from typing import Optional
+from urllib.parse import quote
 
 from fastapi import FastAPI, Form, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from inode_scan import scan
-from orphans import OrphanCandidate, classify_download_orphans, classify_media_orphans, delete_orphan, path_tracked
+from orphans import (
+    OrphanCandidate,
+    classify_download_orphans,
+    classify_media_orphans,
+    delete_orphan,
+    is_tv_path,
+    path_tracked,
+)
 from pathmap import to_relative
 from plex import PlexClient
 from qbit import QBitClient
@@ -29,6 +37,7 @@ DATA_ROOT = os.environ.get("DATA_ROOT", "/data")
 MEDIA_SUBDIRS = ["media/movies", "media/movies-no-backup", "media/tv", "media/tv-no-backup"]
 TV_SUBDIRS = {"media/tv", "media/tv-no-backup"}
 DOWNLOAD_SUBDIRS = ["torrents", "usenet"]
+QBIT_SUBDIRS = ["torrents"]  # subdirs qBittorrent has authority over — not usenet
 
 _scan_cache: dict[int, OrphanCandidate] = {}
 
@@ -200,10 +209,6 @@ def _flatten(paths_by_inode: dict[int, list[str]]) -> list[str]:
     return [p for paths in paths_by_inode.values() for p in paths]
 
 
-def _is_tv_path(path: str) -> bool:
-    return any(path == sub or path.startswith(sub + "/") for sub in TV_SUBDIRS)
-
-
 def _boundary_for(relative_path: str) -> str:
     """Which configured scan subdir a path lives under — the `boundary`
     delete_orphan() needs so pruning stops at the right root (media scan
@@ -241,14 +246,22 @@ def run_scan() -> tuple[list[OrphanCandidate], dict[str, str]]:
     result = scan(data_root, MEDIA_SUBDIRS, DOWNLOAD_SUBDIRS)
 
     download_scanned = _flatten(result.download_only)
+    torrents_scanned = [
+        p for p in download_scanned
+        if any(p == sub or p.startswith(sub + "/") for sub in QBIT_SUBDIRS)
+    ]
     media_scanned = _flatten(result.media_only)
-    tv_scanned = [p for p in media_scanned if _is_tv_path(p)]
-    movie_scanned = [p for p in media_scanned if not _is_tv_path(p)]
+    tv_scanned = [p for p in media_scanned if is_tv_path(p, TV_SUBDIRS)]
+    movie_scanned = [p for p in media_scanned if not is_tv_path(p, TV_SUBDIRS)]
 
     qbit_prefix = os.environ.get("QBIT_PATH_PREFIX", "")
     raw_qbit = _safe(_fetch_qbit_paths)
     qbit_paths = {to_relative(p, qbit_prefix) for p in raw_qbit} if raw_qbit is not None else None
-    qbit_status = _service_status(qbit_paths, download_scanned)
+    # Scoped to torrents-only: download_scanned also includes usenet-side
+    # orphans, which qBittorrent never reports and can't be blamed for —
+    # comparing against the full mix would false-flag a correctly
+    # configured qBit as "unusable" whenever a usenet orphan exists.
+    qbit_status = _service_status(qbit_paths, torrents_scanned)
 
     sonarr_prefix = os.environ.get("SONARR_PATH_PREFIX", "")
     raw_sonarr = _safe(_fetch_sonarr_paths)
@@ -339,16 +352,16 @@ def _enrich_candidate(c: OrphanCandidate) -> dict:
 
 
 @app.get("/orphans", response_class=HTMLResponse)
-async def orphans_page(request: Request):
+async def orphans_page(request: Request, flash: Optional[str] = None):
     try:
         return templates.TemplateResponse(
-            request, "orphans.html", {"candidates": [], "error": None, "status_lines": []}
+            request, "orphans.html", {"candidates": [], "error": None, "status_lines": [], "flash": flash}
         )
     except Exception:
         return templates.TemplateResponse(
             request,
             "orphans.html",
-            {"candidates": [], "error": "Failed to load orphans page", "status_lines": []},
+            {"candidates": [], "error": "Failed to load orphans page", "status_lines": [], "flash": None},
         )
 
 
@@ -426,9 +439,13 @@ async def bulk_delete_orphans(inodes: list[int] = Form(...)):
         fresh_candidates, _ = run_scan()
         fresh_by_inode = {c.inode: c for c in fresh_candidates}
     except Exception:
-        return RedirectResponse(url="/orphans", status_code=302)
+        return RedirectResponse(
+            url=f"/orphans?flash={quote('Re-verify scan failed — no files deleted')}",
+            status_code=302,
+        )
 
     data_root = _current_data_root()
+    failed = 0
     for inode in inodes:
         candidate = fresh_by_inode.get(inode)
         if candidate is None:
@@ -436,6 +453,10 @@ async def bulk_delete_orphans(inodes: list[int] = Form(...)):
         try:
             delete_orphan(data_root, candidate.paths[0], _boundary_for(candidate.paths[0]))
         except (OSError, ValueError):
-            continue
+            failed += 1
+
+    if failed:
+        msg = quote(f"{failed} of {len(inodes)} deletes failed — check logs")
+        return RedirectResponse(url=f"/orphans?flash={msg}", status_code=302)
 
     return RedirectResponse(url="/orphans", status_code=302)

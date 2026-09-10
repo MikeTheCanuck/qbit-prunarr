@@ -21,6 +21,7 @@
 <body>
 
 <h1>Orphan Trawler</h1>
+{% if flash %}<div class="error-banner">{{ flash }}</div>{% endif %}
 <button id="scan-btn" hx-post="/orphans/scan" hx-target="#scan-results" hx-swap="outerHTML" hx-select="#scan-results">
   Scan Now
 </button>
