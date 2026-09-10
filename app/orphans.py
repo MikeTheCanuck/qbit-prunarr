@@ -18,14 +18,46 @@ class OrphanCandidate:
     size_bytes: int
 
 
-def _total_size(data_root: str, paths: list[str]) -> int:
-    total = 0
+def _file_size(data_root: str, paths: list[str]) -> int:
+    """Size of the single file this candidate's paths all point at.
+
+    Every path in an OrphanCandidate is a hardlink to the SAME inode, so
+    the space a delete reclaims is one file's size — summing across paths
+    reports a 50GB movie with two links as 100GB, which is exactly the
+    number this tool exists to get right during a space crunch.
+    """
     for p in paths:
         try:
-            total += os.path.getsize(os.path.join(data_root, p))
+            return os.path.getsize(os.path.join(data_root, p))
         except OSError:
-            pass
-    return total
+            continue
+    return 0
+
+
+def path_tracked(path: str, tracked: set[str]) -> bool:
+    """True if `path` is equal to, or nested inside, any entry in `tracked`.
+
+    qBittorrent's `content_path` is "root path for multifile torrents,
+    absolute file path for singlefile torrents" — so a season pack reports
+    one DIRECTORY while the filesystem scan reports each file inside it.
+    Exact-match membership would flag every file of every multi-file torrent
+    as an orphan while it's still actively seeding, so containment has to be
+    checked by walking `path`'s ancestors rather than comparing strings.
+
+    Walking ancestors (rather than testing `startswith` against every
+    tracked entry) keeps this O(depth) instead of O(len(tracked)), and it
+    can't produce the classic `startswith` false positive where
+    "torrents/Pack2/a.mkv" looks like it lives under "torrents/Pack".
+    """
+    current = path
+    while current:
+        if current in tracked or current + "/" in tracked:
+            return True
+        parent = os.path.dirname(current)
+        if parent == current:
+            return False
+        current = parent
+    return False
 
 
 def classify_download_orphans(result, data_root: str, qbit_paths: set[str] | None) -> list[OrphanCandidate]:
@@ -34,13 +66,13 @@ def classify_download_orphans(result, data_root: str, qbit_paths: set[str] | Non
         return []
     candidates = []
     for inode, paths in result.download_only.items():
-        if not any(p in qbit_paths for p in paths):
+        if not any(path_tracked(p, qbit_paths) for p in paths):
             candidates.append(
                 OrphanCandidate(
                     inode=inode,
                     paths=paths,
                     category="unlinked download",
-                    size_bytes=_total_size(data_root, paths),
+                    size_bytes=_file_size(data_root, paths),
                 )
             )
     return candidates
@@ -80,23 +112,44 @@ def classify_media_orphans(
                     inode=inode,
                     paths=paths,
                     category="orphaned media",
-                    size_bytes=_total_size(data_root, paths),
+                    size_bytes=_file_size(data_root, paths),
                 )
             )
     return candidates
 
 
-def delete_orphan(data_root: str, relative_path: str) -> None:
-    """Delete an orphan file, then prune now-empty parent dirs up to data_root."""
+def delete_orphan(data_root: str, relative_path: str, boundary: str) -> None:
+    """Delete an orphan file, pruning now-empty parent dirs up to `boundary`.
+
+    `boundary` is the configured scan subdir (relative to data_root) that
+    this file lives under — "torrents", "media/movies", etc. Pruning stops
+    AT that directory and never removes or climbs above it.
+
+    The boundary has to be passed in rather than inferred from depth below
+    data_root: the media scan roots sit two levels down ("media/movies"),
+    so a "stop at a direct child of data_root" rule prunes right through
+    "media/movies" itself and leaves Radarr with a missing root folder.
+
+    Raises ValueError if relative_path does not actually live under
+    boundary — a mismatched pair means the caller lost track of which root
+    this file came from, and guessing there would delete the wrong tree.
+    """
+    boundary_rel = boundary.strip("/")
+    path_rel = relative_path.strip("/")
+    if not boundary_rel or not (
+        path_rel == boundary_rel or path_rel.startswith(boundary_rel + "/")
+    ):
+        raise ValueError(
+            f"refusing to delete {relative_path!r}: not under boundary {boundary!r}"
+        )
+
     full_path = os.path.join(data_root, relative_path)
+    boundary_abs = os.path.abspath(os.path.join(data_root, boundary_rel))
+
     os.remove(full_path)
 
-    root = os.path.abspath(data_root)
-    parent = os.path.dirname(full_path)
-    while os.path.abspath(parent) != root:
-        # Don't delete direct children of data_root
-        if os.path.dirname(os.path.abspath(parent)) == root:
-            break
+    parent = os.path.abspath(os.path.dirname(full_path))
+    while parent != boundary_abs and parent.startswith(boundary_abs + os.sep):
         try:
             os.rmdir(parent)
         except OSError:

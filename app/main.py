@@ -8,7 +8,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from inode_scan import scan
-from orphans import OrphanCandidate, classify_download_orphans, classify_media_orphans, delete_orphan
+from orphans import OrphanCandidate, classify_download_orphans, classify_media_orphans, delete_orphan, path_tracked
 from pathmap import to_relative
 from plex import PlexClient
 from qbit import QBitClient
@@ -196,32 +196,101 @@ def _fetch_plex_episode_paths() -> set[str]:
         return client.get_all_episode_paths()
 
 
-def run_scan() -> list[OrphanCandidate]:
-    """Scan the filesystem and classify orphans against every external API."""
+def _flatten(paths_by_inode: dict[int, list[str]]) -> list[str]:
+    return [p for paths in paths_by_inode.values() for p in paths]
+
+
+def _is_tv_path(path: str) -> bool:
+    return any(path == sub or path.startswith(sub + "/") for sub in TV_SUBDIRS)
+
+
+def _boundary_for(relative_path: str) -> str:
+    """Which configured scan subdir a path lives under — the `boundary`
+    delete_orphan() needs so pruning stops at the right root (media scan
+    roots sit two levels below data_root, download roots sit one)."""
+    for sub in MEDIA_SUBDIRS + DOWNLOAD_SUBDIRS:
+        if relative_path == sub or relative_path.startswith(sub + "/"):
+            return sub
+    raise ValueError(f"{relative_path!r} is not under any configured scan subdir")
+
+
+def _service_status(raw_paths: set[str] | None, scanned_paths: list[str]) -> str:
+    """'unreachable' if the fetch itself failed. 'unusable' if it returned
+    data sharing zero overlap with what the scan actually found on disk —
+    the fingerprint of a wrong *_PATH_PREFIX, which normalizes every path
+    to something the scan never saw. A service reporting a legitimately
+    empty set isn't unusable — zero movies in Radarr is a real state, not
+    a misconfiguration — so the check only fires when raw_paths is
+    non-empty AND the scan found files to compare it against."""
+    if raw_paths is None:
+        return "unreachable"
+    if raw_paths and scanned_paths and not any(
+        path_tracked(p, raw_paths) for p in scanned_paths
+    ):
+        return "unusable"
+    return "ok"
+
+
+def run_scan() -> tuple[list[OrphanCandidate], dict[str, str]]:
+    """Scan the filesystem and classify orphans against every external API.
+
+    Returns (candidates, service_statuses) — statuses let the caller show
+    per-service health (ok/unreachable/unusable) without a second scan.
+    """
     data_root = os.environ.get("DATA_ROOT", DATA_ROOT)
     result = scan(data_root, MEDIA_SUBDIRS, DOWNLOAD_SUBDIRS)
+
+    download_scanned = _flatten(result.download_only)
+    media_scanned = _flatten(result.media_only)
+    tv_scanned = [p for p in media_scanned if _is_tv_path(p)]
+    movie_scanned = [p for p in media_scanned if not _is_tv_path(p)]
 
     qbit_prefix = os.environ.get("QBIT_PATH_PREFIX", "")
     raw_qbit = _safe(_fetch_qbit_paths)
     qbit_paths = {to_relative(p, qbit_prefix) for p in raw_qbit} if raw_qbit is not None else None
+    qbit_status = _service_status(qbit_paths, download_scanned)
 
     sonarr_prefix = os.environ.get("SONARR_PATH_PREFIX", "")
     raw_sonarr = _safe(_fetch_sonarr_paths)
     sonarr_paths = {to_relative(p, sonarr_prefix) for p in raw_sonarr} if raw_sonarr is not None else None
+    sonarr_status = _service_status(sonarr_paths, tv_scanned)
 
     radarr_prefix = os.environ.get("RADARR_PATH_PREFIX", "")
     raw_radarr = _safe(_fetch_radarr_paths)
     radarr_paths = {to_relative(p, radarr_prefix) for p in raw_radarr} if raw_radarr is not None else None
+    radarr_status = _service_status(radarr_paths, movie_scanned)
 
     plex_prefix = os.environ.get("PLEX_PATH_PREFIX", "")
     raw_plex_movies = _safe(_fetch_plex_movie_paths)
     plex_movie_paths = (
         {to_relative(p, plex_prefix) for p in raw_plex_movies} if raw_plex_movies is not None else None
     )
+    plex_movie_status = _service_status(plex_movie_paths, movie_scanned)
     raw_plex_episodes = _safe(_fetch_plex_episode_paths)
     plex_episode_paths = (
         {to_relative(p, plex_prefix) for p in raw_plex_episodes} if raw_plex_episodes is not None else None
     )
+    plex_episode_status = _service_status(plex_episode_paths, tv_scanned)
+    plex_sub_statuses = (plex_movie_status, plex_episode_status)
+    plex_status = (
+        "unreachable" if "unreachable" in plex_sub_statuses
+        else "unusable" if "unusable" in plex_sub_statuses
+        else "ok"
+    )
+
+    # Fail closed: an "unusable" service's paths are untrustworthy — drop
+    # them to None so classification treats that side as unknown, same as
+    # an unreachable service, instead of confidently flagging real files.
+    if qbit_status == "unusable":
+        qbit_paths = None
+    if sonarr_status == "unusable":
+        sonarr_paths = None
+    if radarr_status == "unusable":
+        radarr_paths = None
+    if plex_movie_status == "unusable":
+        plex_movie_paths = None
+    if plex_episode_status == "unusable":
+        plex_episode_paths = None
 
     candidates = classify_download_orphans(result, data_root, qbit_paths)
     candidates += classify_media_orphans(
@@ -231,7 +300,32 @@ def run_scan() -> list[OrphanCandidate]:
     _scan_cache.clear()
     for c in candidates:
         _scan_cache[c.inode] = c
-    return candidates
+
+    statuses = {
+        "qBittorrent": qbit_status,
+        "Sonarr": sonarr_status,
+        "Radarr": radarr_status,
+        "Plex": plex_status,
+    }
+    return candidates, statuses
+
+
+_PREFIX_ENV_VAR = {
+    "qBittorrent": "QBIT_PATH_PREFIX",
+    "Sonarr": "SONARR_PATH_PREFIX",
+    "Radarr": "RADARR_PATH_PREFIX",
+    "Plex": "PLEX_PATH_PREFIX",
+}
+
+
+def _status_lines(statuses: dict[str, str]) -> list[str]:
+    lines = []
+    for name, status in statuses.items():
+        if status == "unusable":
+            lines.append(f"{name}: unusable — check {_PREFIX_ENV_VAR[name]}")
+        else:
+            lines.append(f"{name}: {status}")
+    return lines
 
 
 def _enrich_candidate(c: OrphanCandidate) -> dict:
@@ -248,28 +342,35 @@ def _enrich_candidate(c: OrphanCandidate) -> dict:
 async def orphans_page(request: Request):
     try:
         return templates.TemplateResponse(
-            request, "orphans.html", {"candidates": [], "error": None}
+            request, "orphans.html", {"candidates": [], "error": None, "status_lines": []}
         )
     except Exception:
         return templates.TemplateResponse(
             request,
             "orphans.html",
-            {"candidates": [], "error": "Failed to load orphans page"},
+            {"candidates": [], "error": "Failed to load orphans page", "status_lines": []},
         )
 
 
 @app.post("/orphans/scan", response_class=HTMLResponse)
 async def orphans_scan(request: Request):
     try:
-        candidates = [_enrich_candidate(c) for c in run_scan()]
+        raw_candidates, statuses = run_scan()
+        candidates = [_enrich_candidate(c) for c in raw_candidates]
         return templates.TemplateResponse(
-            request, "orphans.html", {"candidates": candidates, "error": None}
+            request,
+            "orphans.html",
+            {"candidates": candidates, "error": None, "status_lines": _status_lines(statuses)},
         )
     except Exception:
         return templates.TemplateResponse(
             request,
             "orphans.html",
-            {"candidates": [], "error": "Scan failed — check service connectivity"},
+            {
+                "candidates": [],
+                "error": "Scan failed — check service connectivity",
+                "status_lines": [],
+            },
         )
 
 
@@ -280,7 +381,7 @@ def _reverify(inode: int) -> OrphanCandidate | None:
     This closes the race between a page scan and a delete click: Sonarr
     could grab a replacement file, or a torrent could resume, in between.
     """
-    fresh = run_scan()
+    fresh, _ = run_scan()
     for c in fresh:
         if c.inode == inode:
             return c
@@ -309,9 +410,9 @@ async def delete_single_orphan(inode: int):
         )
 
     try:
-        delete_orphan(_current_data_root(), fresh.paths[0])
+        delete_orphan(_current_data_root(), fresh.paths[0], _boundary_for(fresh.paths[0]))
         return Response(status_code=200, content="")
-    except OSError as e:
+    except (OSError, ValueError) as e:
         return Response(
             status_code=200,
             media_type="text/html",
@@ -322,7 +423,8 @@ async def delete_single_orphan(inode: int):
 @app.post("/orphans/delete")
 async def bulk_delete_orphans(inodes: list[int] = Form(...)):
     try:
-        fresh_by_inode = {c.inode: c for c in run_scan()}
+        fresh_candidates, _ = run_scan()
+        fresh_by_inode = {c.inode: c for c in fresh_candidates}
     except Exception:
         return RedirectResponse(url="/orphans", status_code=302)
 
@@ -332,8 +434,8 @@ async def bulk_delete_orphans(inodes: list[int] = Form(...)):
         if candidate is None:
             continue
         try:
-            delete_orphan(data_root, candidate.paths[0])
-        except OSError:
+            delete_orphan(data_root, candidate.paths[0], _boundary_for(candidate.paths[0]))
+        except (OSError, ValueError):
             continue
 
     return RedirectResponse(url="/orphans", status_code=302)

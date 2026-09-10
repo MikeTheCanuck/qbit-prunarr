@@ -20,31 +20,39 @@
 </head>
 <body>
 
-{% if error %}<div class="error-banner">{{ error }}</div>{% endif %}
-
 <h1>Orphan Trawler</h1>
-<button id="scan-btn" hx-post="/orphans/scan" hx-target="#orphan-table" hx-swap="outerHTML" hx-select="#orphan-table">
+<button id="scan-btn" hx-post="/orphans/scan" hx-target="#scan-results" hx-swap="outerHTML" hx-select="#scan-results">
   Scan Now
 </button>
 
-<form method="post" action="/orphans/delete" id="bulk-form">
-  <table id="orphan-table">
-    <thead>
-      <tr>
-        <th><input type="checkbox" id="select-all"></th>
-        <th>Path</th>
-        <th>Size</th>
-        <th>Category</th>
-        <th>Delete</th>
-      </tr>
-    </thead>
-    <tbody>
-      {% for c in candidates %}
-        {% include "_orphan_row.html" %}
-      {% endfor %}
-    </tbody>
-  </table>
-</form>
+<div id="scan-results">
+  {% if error %}<div class="error-banner">{{ error }}</div>{% endif %}
+
+  {% if status_lines %}
+  <ul id="service-status">
+    {% for line in status_lines %}<li>{{ line }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+
+  <form method="post" action="/orphans/delete" id="bulk-form">
+    <table id="orphan-table">
+      <thead>
+        <tr>
+          <th><input type="checkbox" id="select-all"></th>
+          <th>Path</th>
+          <th>Size</th>
+          <th>Category</th>
+          <th>Delete</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in candidates %}
+          {% include "_orphan_row.html" %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </form>
+</div>
 
 </body>
 </html>
