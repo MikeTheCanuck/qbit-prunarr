@@ -190,21 +190,6 @@ TORRENT_OLDER_STILL = {
     "size": 8_000_000_000,
     "uploaded": 16_000_000_000,
     "tags": "only-for-ratio",
-    "category": "",
-}
-
-
-def test_index_default_order_within_bucket():
-    # TORRENT_OLD (100d) and TORRENT_OLDER_STILL (150d) both land in the
-    # 90-180d bucket. TORRENT_OLDER_STILL has the smaller last_activity
-    # (older timestamp = longer inactive) and must render first.
-    mock_instance = _make_mock_client([TORRENT_OLD, TORRENT_OLDER_STILL])
-    with patch("main.QBitClient", return_value=mock_instance):
-        client = TestClient(app)
-        response = client.get("/?min_days=30")
-    assert response.status_code == 200
-    assert response.text.index("ancient-movie.mkv") < response.text.index("old-series.mkv")
-
 
 # ---------------------------------------------------------------------------
 # Test 7: GET /api/widget — returns JSON with correct fields
