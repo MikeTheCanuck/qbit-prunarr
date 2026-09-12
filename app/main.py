@@ -28,6 +28,10 @@ def _get_client() -> QBitClient:
     )
 
 
+def _get_tag() -> str:
+    return os.environ.get("QBIT_TAG", "only-for-ratio")
+
+
 def _enrich(torrent: dict) -> dict:
     t = dict(torrent)
     t["days_inactive"] = int((time.time() - t["last_activity"]) / 86400)
@@ -55,7 +59,7 @@ async def index(
     try:
         with _get_client() as client:
             client.login()
-            raw_torrents = client.get_torrents("only-for-ratio")
+            raw_torrents = client.get_torrents(_get_tag())
     except ValueError:
         return templates.TemplateResponse(
             request,
@@ -114,7 +118,7 @@ async def delete_torrent(hash: str):
         return Response(
             status_code=200,
             media_type="text/html",
-            content=f'<tr id="row-{hash}"><td colspan="6" style="color:red;padding:6px 12px">Delete failed: {e}</td></tr>',
+            content=f'<tr id="row-{hash}"><td colspan="7" style="color:red;padding:6px 12px">Delete failed: {e}</td></tr>',
         )
 
 
@@ -134,7 +138,7 @@ async def widget():
     try:
         with _get_client() as client:
             client.login()
-            torrents = client.get_torrents("only-for-ratio")
+            torrents = client.get_torrents(_get_tag())
         wasted_gb = round(sum(t["size"] for t in torrents) / 1e9, 2)
         return JSONResponse({"cold_torrents": len(torrents), "wasted_gb": wasted_gb})
     except Exception:

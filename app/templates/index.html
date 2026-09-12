@@ -3,30 +3,61 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>qBit Pruner</title>
+  <title>qBit Prunarr</title>
   <script src="https://unpkg.com/htmx.org@2.0.3"></script>
   <style>
-    body { font-family: sans-serif; max-width: 1200px; margin: 0 auto; padding: 16px; }
-    h1 { margin-top: 0; }
-    .error-banner { background: #f8d7da; color: #842029; padding: 10px 16px; margin-bottom: 16px; border-radius: 4px; }
-    .flash-banner { background: #fff3cd; color: #664d03; padding: 10px 16px; margin-bottom: 16px; border-radius: 4px; }
-.controls { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; flex-wrap: wrap; }
-    .slider-group { display: flex; align-items: center; gap: 8px; }
+    :root {
+      --bg: #1f2126;
+      --panel-bg: #26282e;
+      --header-bg: #2a2d33;
+      --row-hover: #2e3138;
+      --border: #34363c;
+      --text: #d5d6d8;
+      --text-muted: #9aa0a6;
+      --accent: #3ba7d9;
+      --accent-hover: #2f8ebf;
+      --danger: #c8302a;
+      --danger-hover: #a3241f;
+    }
+    body {
+      font-family: sans-serif;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 16px;
+      background: var(--bg);
+      color: var(--text);
+    }
+    h1 { margin-top: 0; color: var(--text); }
+    .error-banner { background: #4a1f22; color: #f5b8bb; padding: 10px 16px; margin-bottom: 16px; border-radius: 4px; }
+    .flash-banner { background: #4a3d1f; color: #f0d9a0; padding: 10px 16px; margin-bottom: 16px; border-radius: 4px; }
+    .controls { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; flex-wrap: wrap; padding: 10px 12px; background: var(--panel-bg); border: 1px solid var(--border); border-radius: 4px; }
+    .slider-group { display: flex; align-items: center; gap: 8px; color: var(--text-muted); }
     .bulk-bar { margin-bottom: 8px; }
-    table { border-collapse: collapse; width: 100%; }
-    th, td { padding: 6px 12px; text-align: left; border-bottom: 1px solid #ddd; }
-    th { background: #f8f8f8; }
-    .bucket-header td { background: #f0f0f0; font-weight: bold; }
-    #bulk-delete-btn { padding: 8px 16px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; }
-    #bulk-delete-btn:disabled { background: #aaa; cursor: default; }
-    button[hx-delete] { padding: 4px 10px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; }
-    button[hx-delete]:hover { background: #bb2d3b; }
-    dialog { border-radius: 8px; padding: 24px; border: 1px solid #ccc; max-width: 400px; }
-    dialog::backdrop { background: rgba(0, 0, 0, 0.5); }
+    td.num { text-align: right; }
+    th.num { text-align: center; }
+    table { border-collapse: collapse; width: 100%; background: var(--panel-bg); table-layout: fixed; }
+    th, td { padding: 6px 12px; text-align: left; border-bottom: 1px solid var(--border); overflow-wrap: break-word; }
+    th { background: var(--header-bg); color: var(--text-muted); font-weight: 600; text-align: center; }
+    th.sortable { cursor: pointer; user-select: none; }
+    th.sortable::after { content: ''; margin-left: 4px; color: var(--accent); }
+    th.sort-asc::after { content: '\2191'; }
+    th.sort-desc::after { content: '\2193'; }
+    tbody tr:not(.bucket-header):hover { background: var(--row-hover); }
+    .bucket-header td { background: var(--header-bg); font-weight: bold; color: var(--accent); }
+    .bucket-header .bucket-label { padding-left: 44px; }
+    #bulk-delete-btn { padding: 8px 16px; background: var(--danger); color: white; border: none; border-radius: 4px; cursor: pointer; }
+    #bulk-delete-btn:hover:not(:disabled) { background: var(--danger-hover); }
+    #bulk-delete-btn:disabled { background: #4a4d54; color: var(--text-muted); cursor: default; }
+    button[hx-delete] { padding: 4px 10px; background: var(--danger); color: white; border: none; border-radius: 4px; cursor: pointer; }
+    button[hx-delete]:hover { background: var(--danger-hover); }
+    input[type="range"] { accent-color: var(--accent); }
+    dialog { border-radius: 8px; padding: 24px; border: 1px solid var(--border); max-width: 400px; background: var(--panel-bg); color: var(--text); }
+    dialog::backdrop { background: rgba(0, 0, 0, 0.6); }
     dialog p { margin-top: 0; }
     dialog button { padding: 8px 16px; margin: 4px; border-radius: 4px; border: none; cursor: pointer; }
-    dialog button[type="submit"] { background: #dc3545; color: white; }
-    dialog button[type="button"] { background: #6c757d; color: white; }
+    dialog button[type="submit"] { background: var(--danger); color: white; }
+    dialog button[type="submit"]:hover { background: var(--danger-hover); }
+    dialog button[type="button"] { background: #4a4d54; color: var(--text); }
   </style>
 </head>
 <body>
@@ -34,7 +65,7 @@
 {% if error %}<div class="error-banner">{{ error }}</div>{% endif %}
 {% if flash %}<div class="flash-banner">{{ flash }}</div>{% endif %}
 
-<h1>qBit Pruner</h1>
+<h1>qBit Prunarr</h1>
 <div class="controls">
   <div class="slider-group">
     <label for="min-days-slider">Min inactive:</label>
@@ -56,13 +87,23 @@
   </div>
 
   <table id="torrent-table">
+    <colgroup>
+      <col style="width: 32px">
+      <col>
+      <col style="width: 80px">
+      <col style="width: 100px">
+      <col style="width: 110px">
+      <col style="width: 140px">
+      <col style="width: 100px">
+    </colgroup>
     <thead>
       <tr>
         <th><input type="checkbox" id="select-all"></th>
-        <th>Name</th>
-        <th>Size</th>
-        <th>Inactive (days)</th>
+        <th class="sortable" data-sort="name">Name</th>
+        <th class="sortable num" data-sort="size">Size (GB)</th>
+        <th class="sortable num" data-sort="inactive">Inactive (days)</th>
         <th>Category</th>
+        <th>Tags</th>
         <th>Delete</th>
       </tr>
     </thead>
@@ -71,7 +112,7 @@
         {% if bucket.torrents %}
         <tr class="bucket-header">
           <td><input type="checkbox" class="bucket-select" data-bucket="{{ bucket.label }}"></td>
-          <td colspan="5"><strong>{{ bucket.label }}</strong> ({{ bucket.torrents|length }})</td>
+          <td colspan="6" class="bucket-label"><strong>{{ bucket.label }}</strong> ({{ bucket.torrents|length }})</td>
         </tr>
         {% for t in bucket.torrents %}
           {% include "_row.html" %}
@@ -122,6 +163,92 @@
       updateCounts();
     }
   });
+
+  var sortState = { column: null, dir: null };
+  var defaultOrder = null;
+
+  function getBuckets() {
+    var tbody = document.querySelector('#torrent-table tbody');
+    if (!tbody) { return []; }
+    var buckets = [];
+    var current = null;
+    Array.prototype.forEach.call(tbody.children, function (row) {
+      if (row.classList.contains('bucket-header')) {
+        current = { header: row, rows: [] };
+        buckets.push(current);
+      } else if (current) {
+        current.rows.push(row);
+      }
+    });
+    return buckets;
+  }
+
+  function captureDefaultOrder() {
+    defaultOrder = getBuckets().map(function (bucket) {
+      return { header: bucket.header, rows: bucket.rows.slice() };
+    });
+  }
+
+  function applySort(column, dir) {
+    var buckets = getBuckets();
+    buckets.forEach(function (bucket, i) {
+      var rows;
+      if (dir === null) {
+        rows = defaultOrder[i]
+          ? defaultOrder[i].rows.filter(function (row) { return row.isConnected; })
+          : bucket.rows.slice();
+      } else {
+        rows = bucket.rows.slice().sort(function (a, b) {
+          var av = a.dataset[column];
+          var bv = b.dataset[column];
+          if (column === 'name') {
+            return dir === 'asc' ? av.localeCompare(bv) : bv.localeCompare(av);
+          }
+          av = parseFloat(av);
+          bv = parseFloat(bv);
+          return dir === 'asc' ? av - bv : bv - av;
+        });
+      }
+      var anchor = bucket.header;
+      rows.forEach(function (row) {
+        anchor.after(row);
+        anchor = row;
+      });
+    });
+  }
+
+  function updateSortIndicators() {
+    document.querySelectorAll('th[data-sort]').forEach(function (th) {
+      th.classList.remove('sort-asc', 'sort-desc');
+      if (th.dataset.sort === sortState.column) {
+        if (sortState.dir === 'asc') { th.classList.add('sort-asc'); }
+        if (sortState.dir === 'desc') { th.classList.add('sort-desc'); }
+      }
+    });
+  }
+
+  document.addEventListener('click', function (e) {
+    var th = e.target.closest('th[data-sort]');
+    if (!th) { return; }
+    var column = th.dataset.sort;
+    if (sortState.column !== column) {
+      sortState = { column: column, dir: 'asc' };
+    } else if (sortState.dir === 'asc') {
+      sortState.dir = 'desc';
+    } else if (sortState.dir === 'desc') {
+      sortState = { column: null, dir: null };
+    }
+    applySort(sortState.column, sortState.dir);
+    updateSortIndicators();
+  });
+
+  document.body.addEventListener('htmx:afterSwap', function () {
+    sortState = { column: null, dir: null };
+    captureDefaultOrder();
+    updateSortIndicators();
+  });
+
+  captureDefaultOrder();
 })();
 </script>
 

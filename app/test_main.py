@@ -36,6 +36,18 @@ TORRENT_OLD = {
 
 ALL_TORRENTS = [TORRENT_FRESH, TORRENT_OLD]
 
+# A torrent that's been inactive for 150 days (older than TORRENT_OLD)
+TORRENT_OLDER_STILL = {
+    "name": "ancient-movie.mkv",
+    "hash": "hash003",
+    "last_activity": int(NOW - 150 * 86400),
+    "added_on": int(NOW - 300 * 86400),
+    "size": 8_000_000_000,
+    "uploaded": 16_000_000_000,
+    "tags": "only-for-ratio",
+    "category": "",
+}
+
 
 @pytest.fixture(autouse=True)
 def set_env(monkeypatch):
@@ -88,6 +100,23 @@ def test_index_min_days_filter():
     assert "old-series.mkv" in response.text
     # fresh-file is 5 days inactive — filtered out
     assert "fresh-file.mkv" not in response.text
+
+
+# ---------------------------------------------------------------------------
+# Test: GET / — default order: within a bucket, most-stale-first (ascending
+# last_activity) — this is the ordering bug Mike spotted in v1.
+# ---------------------------------------------------------------------------
+
+def test_index_default_order_within_bucket():
+    # TORRENT_OLD (100d) and TORRENT_OLDER_STILL (150d) both land in the
+    # 90-180d bucket. TORRENT_OLDER_STILL has the smaller last_activity
+    # (older timestamp = longer inactive) and must render first.
+    mock_instance = _make_mock_client([TORRENT_OLD, TORRENT_OLDER_STILL])
+    with patch("main.QBitClient", return_value=mock_instance):
+        client = TestClient(app)
+        response = client.get("/?min_days=30")
+    assert response.status_code == 200
+    assert response.text.index("ancient-movie.mkv") < response.text.index("old-series.mkv")
 
 
 # ---------------------------------------------------------------------------
@@ -194,3 +223,95 @@ def test_widget_returns_json():
     assert data["cold_torrents"] == 2
     # total size = 5GB + 10GB = 15GB
     assert data["wasted_gb"] == 15.0
+
+
+# ---------------------------------------------------------------------------
+# Test: QBIT_TAG env var overrides the default "only-for-ratio" tag filter
+# ---------------------------------------------------------------------------
+
+def test_index_uses_qbit_tag_env_var(monkeypatch):
+    monkeypatch.setenv("QBIT_TAG", "custom-tag")
+    mock_instance = _make_mock_client(ALL_TORRENTS)
+    with patch("main.QBitClient", return_value=mock_instance):
+        client = TestClient(app)
+        client.get("/")
+    mock_instance.get_torrents.assert_called_once_with("custom-tag")
+
+
+def test_index_default_tag_when_env_unset():
+    mock_instance = _make_mock_client(ALL_TORRENTS)
+    with patch("main.QBitClient", return_value=mock_instance):
+        client = TestClient(app)
+        client.get("/")
+    mock_instance.get_torrents.assert_called_once_with("only-for-ratio")
+
+
+def test_index_renders_tags_column():
+    mock_instance = _make_mock_client(ALL_TORRENTS)
+    with patch("main.QBitClient", return_value=mock_instance):
+        client = TestClient(app)
+        response = client.get("/")
+    assert "<th>Tags</th>" in response.text
+    assert "only-for-ratio" in response.text
+
+
+# ---------------------------------------------------------------------------
+# Test: page title and heading say "qBit Prunarr" (renamed from "qBit Pruner")
+# ---------------------------------------------------------------------------
+
+def test_index_title_is_prunarr():
+    mock_instance = _make_mock_client(ALL_TORRENTS)
+    with patch("main.QBitClient", return_value=mock_instance):
+        client = TestClient(app)
+        response = client.get("/")
+    assert "<title>qBit Prunarr</title>" in response.text
+    assert "<h1>qBit Prunarr</h1>" in response.text
+
+
+# ---------------------------------------------------------------------------
+# Test: Size column header is "Size (GB)" and cell shows a bare number
+# (no trailing "GB" suffix, per v2 cleanup)
+# ---------------------------------------------------------------------------
+
+def test_index_size_column_format():
+    mock_instance = _make_mock_client(ALL_TORRENTS)
+    with patch("main.QBitClient", return_value=mock_instance):
+        client = TestClient(app)
+        response = client.get("/")
+    assert '<th class="sortable num" data-sort="size">Size (GB)</th>' in response.text
+    # TORRENT_OLD is 10_000_000_000 bytes -> 10.0 GB, rendered bare (no "GB" suffix)
+    assert ">10.0<" in response.text
+    assert "10.0 GB" not in response.text
+
+
+# ---------------------------------------------------------------------------
+# Test: sortable column headers and row data-attributes are present
+# (client-side sort JS itself is verified manually in a browser - no JS
+# test harness in this stack)
+# ---------------------------------------------------------------------------
+
+def test_index_sort_attributes_present():
+    mock_instance = _make_mock_client(ALL_TORRENTS)
+    with patch("main.QBitClient", return_value=mock_instance):
+        client = TestClient(app)
+        response = client.get("/")
+    assert 'data-sort="name"' in response.text
+    assert 'data-sort="size"' in response.text
+    assert 'data-sort="inactive"' in response.text
+    assert 'data-name="old-series.mkv"' in response.text
+    assert 'data-size="10.0"' in response.text
+    assert 'data-inactive="100"' in response.text
+
+
+# ---------------------------------------------------------------------------
+# Test: dark skin CSS variables are present (smoke check - full visual
+# verification happens manually in a browser, see plan's final step)
+# ---------------------------------------------------------------------------
+
+def test_index_dark_skin_applied():
+    mock_instance = _make_mock_client(ALL_TORRENTS)
+    with patch("main.QBitClient", return_value=mock_instance):
+        client = TestClient(app)
+        response = client.get("/")
+    assert "--bg: #1f2126" in response.text
+    assert "--accent: #3ba7d9" in response.text
