@@ -33,16 +33,18 @@
     .controls { display: flex; align-items: center; gap: 16px; margin-bottom: 12px; flex-wrap: wrap; padding: 10px 12px; background: var(--panel-bg); border: 1px solid var(--border); border-radius: 4px; }
     .slider-group { display: flex; align-items: center; gap: 8px; color: var(--text-muted); }
     .bulk-bar { margin-bottom: 8px; }
-    .num { text-align: right; }
-    table { border-collapse: collapse; width: 100%; background: var(--panel-bg); }
-    th, td { padding: 6px 12px; text-align: left; border-bottom: 1px solid var(--border); }
-    th { background: var(--header-bg); color: var(--text-muted); font-weight: 600; }
+    td.num { text-align: right; }
+    th.num { text-align: center; }
+    table { border-collapse: collapse; width: 100%; background: var(--panel-bg); table-layout: fixed; }
+    th, td { padding: 6px 12px; text-align: left; border-bottom: 1px solid var(--border); overflow-wrap: break-word; }
+    th { background: var(--header-bg); color: var(--text-muted); font-weight: 600; text-align: center; }
     th.sortable { cursor: pointer; user-select: none; }
     th.sortable::after { content: ''; margin-left: 4px; color: var(--accent); }
     th.sort-asc::after { content: '\2191'; }
     th.sort-desc::after { content: '\2193'; }
     tbody tr:not(.bucket-header):hover { background: var(--row-hover); }
     .bucket-header td { background: var(--header-bg); font-weight: bold; color: var(--accent); }
+    .bucket-header .bucket-label { padding-left: 44px; }
     #bulk-delete-btn { padding: 8px 16px; background: var(--danger); color: white; border: none; border-radius: 4px; cursor: pointer; }
     #bulk-delete-btn:hover:not(:disabled) { background: var(--danger-hover); }
     #bulk-delete-btn:disabled { background: #4a4d54; color: var(--text-muted); cursor: default; }
@@ -85,12 +87,21 @@
   </div>
 
   <table id="torrent-table">
+    <colgroup>
+      <col style="width: 32px">
+      <col>
+      <col style="width: 80px">
+      <col style="width: 100px">
+      <col style="width: 110px">
+      <col style="width: 140px">
+      <col style="width: 100px">
+    </colgroup>
     <thead>
       <tr>
         <th><input type="checkbox" id="select-all"></th>
         <th class="sortable" data-sort="name">Name</th>
-        <th class="sortable" data-sort="size">Size (GB)</th>
-        <th class="sortable" data-sort="inactive">Inactive (days)</th>
+        <th class="sortable num" data-sort="size">Size (GB)</th>
+        <th class="sortable num" data-sort="inactive">Inactive (days)</th>
         <th>Category</th>
         <th>Tags</th>
         <th>Delete</th>
@@ -101,7 +112,7 @@
         {% if bucket.torrents %}
         <tr class="bucket-header">
           <td><input type="checkbox" class="bucket-select" data-bucket="{{ bucket.label }}"></td>
-          <td colspan="6"><strong>{{ bucket.label }}</strong> ({{ bucket.torrents|length }})</td>
+          <td colspan="6" class="bucket-label"><strong>{{ bucket.label }}</strong> ({{ bucket.torrents|length }})</td>
         </tr>
         {% for t in bucket.torrents %}
           {% include "_row.html" %}

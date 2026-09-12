@@ -249,7 +249,7 @@ def test_index_size_column_format():
     with patch("main.QBitClient", return_value=mock_instance):
         client = TestClient(app)
         response = client.get("/")
-    assert '<th class="sortable" data-sort="size">Size (GB)</th>' in response.text
+    assert '<th class="sortable num" data-sort="size">Size (GB)</th>' in response.text
     # TORRENT_OLD is 10_000_000_000 bytes -> 10.0 GB, rendered bare (no "GB" suffix)
     assert ">10.0<" in response.text
     assert "10.0 GB" not in response.text
