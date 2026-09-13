@@ -61,6 +61,37 @@ def test_multiple_media_subdirs_are_all_walked(tmp_path):
     assert len(result.media_only) == 2
 
 
+def test_synology_recycle_bin_is_excluded(tmp_path):
+    """.Trash-<uid> is DSM's own shared-folder recycle bin (Btrfs
+    convention) — its contents are already user-deleted and DSM-managed,
+    not orphans for us to flag and unlink out from under it."""
+    root = str(tmp_path)
+    _make_file(os.path.join(root, "torrents", ".Trash-1027", "files", "deleted.mkv"))
+    _make_file(os.path.join(root, "torrents", "real.mkv"))
+
+    result = scan(root, ["media/movies"], ["torrents"])
+
+    assert len(result.download_only) == 1
+    paths = next(iter(result.download_only.values()))
+    assert any(p.endswith("real.mkv") for p in paths)
+    assert not any("Trash" in p for p in paths)
+
+
+def test_synology_eadir_and_hash_recycle_are_excluded(tmp_path):
+    """@eaDir is DSM's thumbnail/metadata shadow directory; #recycle is
+    the SMB-facing recycle bin folder name. Neither is user content."""
+    root = str(tmp_path)
+    _make_file(os.path.join(root, "media", "movies", "@eaDir", "thumb.jpg"))
+    _make_file(os.path.join(root, "media", "movies", "#recycle", "old.mkv"))
+    _make_file(os.path.join(root, "media", "movies", "Movie (2020)", "movie.mkv"))
+
+    result = scan(root, ["media/movies"], ["torrents"])
+
+    assert len(result.media_only) == 1
+    paths = next(iter(result.media_only.values()))
+    assert any(p.endswith("movie.mkv") for p in paths)
+
+
 def test_missing_directory_is_treated_as_empty(tmp_path):
     root = str(tmp_path)
     os.makedirs(os.path.join(root, "media"))

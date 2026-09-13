@@ -6,7 +6,15 @@ media-server-name conventions differ). Grouping by inode is the only
 reliable way to tell a linked file from an orphan.
 """
 import os
+import re
 from dataclasses import dataclass, field
+
+# Synology-managed housekeeping directories, not user content. A raw
+# os.walk has no awareness of these conventions and would otherwise
+# classify recycle-bin/thumbnail-cache contents as ordinary orphans —
+# deleting them via our own unlink bypasses DSM's own recycle-bin
+# accounting instead of just being redundant.
+_EXCLUDED_DIR_PATTERN = re.compile(r"^(@eaDir|#recycle|\.Trash-\d+)$")
 
 
 @dataclass
@@ -21,7 +29,8 @@ def _walk_inodes(root: str) -> dict[int, list[str]]:
     result: dict[int, list[str]] = {}
     if not os.path.isdir(root):
         return result
-    for dirpath, _dirnames, filenames in os.walk(root):
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if not _EXCLUDED_DIR_PATTERN.match(d)]
         for name in filenames:
             full = os.path.join(dirpath, name)
             try:
