@@ -269,6 +269,33 @@ def test_delete_single_orphan_after_reverify(tmp_path):
     assert not os.path.exists(path)
 
 
+def test_delete_single_orphan_removes_all_hardlink_paths(tmp_path):
+    """Two names for the same inode within torrents/ (a duplicate copy, no
+    media link) both have to go — leaving one behind means the file's data
+    is never actually freed even though the whole size was reported."""
+    import os
+    root = str(tmp_path)
+    original = os.path.join(root, "torrents", "seed.mkv")
+    duplicate = os.path.join(root, "torrents", "seed-copy.mkv")
+    _make_file(original)
+    os.link(original, duplicate)
+
+    with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
+         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set())), \
+         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set())), \
+         patch("main.PlexClient", return_value=_mock_client(
+             get_all_movie_paths=set(), get_all_episode_paths=set()
+         )):
+        client = TestClient(app)
+        client.post("/orphans/scan")
+        inode = next(iter(main._scan_cache))
+        response = client.delete(f"/orphans/{inode}")
+
+    assert response.status_code == 200
+    assert not os.path.exists(original)
+    assert not os.path.exists(duplicate)
+
+
 def test_delete_skips_if_no_longer_orphan(tmp_path):
     import os
     path = os.path.join(str(tmp_path), "torrents", "seed.mkv")

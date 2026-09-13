@@ -7,7 +7,8 @@
     <button hx-delete="/orphans/{{ c.inode }}"
             hx-target="#orphan-row-{{ c.inode }}"
             hx-swap="outerHTML"
-            hx-confirm="Delete {{ c.display_path }}?">
+            hx-confirm="Delete {{ c.display_path }}?"
+            hx-disabled-elt="this">
       Delete
     </button>
   </td>

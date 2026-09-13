@@ -1,4 +1,5 @@
 """qBit Pruner — FastAPI app."""
+import asyncio
 import os
 import time
 from typing import Optional
@@ -368,7 +369,12 @@ async def orphans_page(request: Request, flash: Optional[str] = None):
 @app.post("/orphans/scan", response_class=HTMLResponse)
 async def orphans_scan(request: Request):
     try:
-        raw_candidates, statuses = run_scan()
+        # A real scan walks the whole data tree and calls 4 external APIs
+        # synchronously — on real data (tens of thousands of files) that's
+        # ~15s, long enough to freeze the single-threaded event loop for
+        # every other request (including the unrelated /torrents page) if
+        # run inline. Offloading to a thread keeps the server responsive.
+        raw_candidates, statuses = await asyncio.to_thread(run_scan)
         candidates = [_enrich_candidate(c) for c in raw_candidates]
         return templates.TemplateResponse(
             request,
@@ -387,18 +393,30 @@ async def orphans_scan(request: Request):
         )
 
 
-def _reverify(inode: int) -> OrphanCandidate | None:
+async def _reverify(inode: int) -> OrphanCandidate | None:
     """Re-run the scan and return the fresh candidate for inode, or None
     if it's no longer flagged as an orphan.
 
     This closes the race between a page scan and a delete click: Sonarr
     could grab a replacement file, or a torrent could resume, in between.
     """
-    fresh, _ = run_scan()
+    fresh, _ = await asyncio.to_thread(run_scan)
     for c in fresh:
         if c.inode == inode:
             return c
     return None
+
+
+def _delete_candidate(data_root: str, candidate: OrphanCandidate) -> None:
+    """Unlink every hardlink path for this candidate's inode.
+
+    All of candidate.paths point at the same inode — removing only the
+    first name leaves the others still referencing it, so the file's
+    data is never actually freed even though the UI reports its full
+    size as reclaimed.
+    """
+    for path in candidate.paths:
+        delete_orphan(data_root, path, _boundary_for(path))
 
 
 @app.delete("/orphans/{inode}")
@@ -407,7 +425,7 @@ async def delete_single_orphan(inode: int):
         return Response(status_code=200, content="")
 
     try:
-        fresh = _reverify(inode)
+        fresh = await _reverify(inode)
     except Exception as e:
         return Response(
             status_code=200,
@@ -423,7 +441,7 @@ async def delete_single_orphan(inode: int):
         )
 
     try:
-        delete_orphan(_current_data_root(), fresh.paths[0], _boundary_for(fresh.paths[0]))
+        _delete_candidate(_current_data_root(), fresh)
         return Response(status_code=200, content="")
     except (OSError, ValueError) as e:
         return Response(
@@ -436,7 +454,7 @@ async def delete_single_orphan(inode: int):
 @app.post("/orphans/delete")
 async def bulk_delete_orphans(inodes: list[int] = Form(...)):
     try:
-        fresh_candidates, _ = run_scan()
+        fresh_candidates, _ = await asyncio.to_thread(run_scan)
         fresh_by_inode = {c.inode: c for c in fresh_candidates}
     except Exception:
         return RedirectResponse(
@@ -451,7 +469,7 @@ async def bulk_delete_orphans(inodes: list[int] = Form(...)):
         if candidate is None:
             continue
         try:
-            delete_orphan(data_root, candidate.paths[0], _boundary_for(candidate.paths[0]))
+            _delete_candidate(data_root, candidate)
         except (OSError, ValueError):
             failed += 1
 
