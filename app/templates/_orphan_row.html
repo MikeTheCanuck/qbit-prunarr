@@ -1,4 +1,4 @@
-<tr id="orphan-row-{{ c.inode }}">
+<tr id="orphan-row-{{ c.inode }}" data-path="{{ c.display_path }}" data-size-bytes="{{ c.size_bytes }}" data-category="{{ c.category }}">
   <td><input type="checkbox" name="inodes" value="{{ c.inode }}" class="orphan-cb"></td>
   <td>{{ c.display_path }}{% if c.extra_paths > 0 %} (+{{ c.extra_paths }} more){% endif %}</td>
   <td>{{ c.size_gb }} GB</td>

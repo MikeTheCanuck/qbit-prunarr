@@ -74,6 +74,27 @@ def test_scan_finds_download_orphan(tmp_path):
     assert "unlinked download" in response.text
 
 
+def test_scan_result_rows_carry_sort_data_attributes(tmp_path):
+    """The client-side size-sort (biggest orphan first, since one orphaned
+    torrent can fragment into hundreds of near-zero metadata-file rows)
+    reads these attributes directly off each row."""
+    import os
+    _make_file(os.path.join(str(tmp_path), "torrents", "seed.mkv"), content=b"x" * 5000)
+
+    with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
+         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set())), \
+         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set())), \
+         patch("main.PlexClient", return_value=_mock_client(
+             get_all_movie_paths=set(), get_all_episode_paths=set()
+         )):
+        client = TestClient(app)
+        response = client.post("/orphans/scan")
+
+    assert 'data-size-bytes="5000"' in response.text
+    assert 'data-category="unlinked download"' in response.text
+    assert 'data-path="torrents/seed.mkv"' in response.text
+
+
 def test_scan_returns_200_with_inline_error_on_unexpected_failure(tmp_path):
     with patch("main.scan", side_effect=RuntimeError("disk fell off")):
         client = TestClient(app)

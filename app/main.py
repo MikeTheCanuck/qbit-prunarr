@@ -349,6 +349,7 @@ def _enrich_candidate(c: OrphanCandidate) -> dict:
         "extra_paths": len(c.paths) - 1,
         "category": c.category,
         "size_gb": round(c.size_bytes / 1e9, 2),
+        "size_bytes": c.size_bytes,
     }
 
 
