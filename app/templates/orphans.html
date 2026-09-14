@@ -22,6 +22,9 @@
     th.sortable::after { content: ''; margin-left: 4px; color: #0d6efd; }
     th.sort-asc::after { content: '\2191'; }
     th.sort-desc::after { content: '\2193'; }
+    h2 { margin-top: 32px; margin-bottom: 4px; }
+    .section-subtitle { color: #555; margin-top: 0; margin-bottom: 12px; max-width: 700px; }
+    .needs-review h2 { color: #842029; }
   </style>
 </head>
 <body>
@@ -44,74 +47,106 @@
   </ul>
   {% endif %}
 
-  <form method="post" action="/orphans/delete" id="bulk-form">
-    <table id="orphan-table">
+  <h2>Unlinked Downloads</h2>
+  <p class="section-subtitle">Not referenced by any active torrent — generally safe to reclaim.</p>
+  <form method="post" action="/orphans/delete" id="download-form">
+    <table id="download-table">
       <thead>
         <tr>
-          <th><input type="checkbox" id="select-all"></th>
+          <th><input type="checkbox" id="select-all-download"></th>
           <th class="sortable" data-sort="path">Path</th>
           <th class="sortable" data-sort="size">Size</th>
-          <th class="sortable" data-sort="category">Category</th>
           <th>Delete</th>
         </tr>
       </thead>
       <tbody>
-        {% for c in candidates %}
+        {% for c in download_candidates %}
           {% include "_orphan_row.html" %}
         {% endfor %}
       </tbody>
     </table>
   </form>
+
+  <div class="needs-review">
+    <h2>Needs Review</h2>
+    <p class="section-subtitle">Sonarr/Radarr + Plex don't confirm this file. Two likely explanations: it's a safe duplicate already tracked elsewhere, or it's real content that never got imported. Check each one before deleting — don't assume either way.</p>
+    <form method="post" action="/orphans/delete" id="review-form">
+      <table id="review-table">
+        <thead>
+          <tr>
+            <th><input type="checkbox" id="select-all-review"></th>
+            <th class="sortable" data-sort="path">Path</th>
+            <th class="sortable" data-sort="size">Size</th>
+            <th>Delete</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for c in review_candidates %}
+            {% include "_orphan_row.html" %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </form>
+  </div>
 </div>
 
 <script>
   // Default sort: size descending, so the real space-hogs surface above
   // the sea of near-zero metadata-file rows a single orphaned torrent can
-  // fragment into. Table can be large (thousands of rows on a real
+  // fragment into. Tables can be large (thousands of rows on a real
   // library) so this sorts in place rather than re-rendering via the
-  // server.
-  var sortState = { column: 'size', dir: 'desc' };
+  // server. Download and Review tables sort independently of each other.
+  var sortStates = {
+    'download-table': { column: 'size', dir: 'desc' },
+    'review-table': { column: 'size', dir: 'desc' }
+  };
 
   function cellValue(row, column) {
     if (column === 'size') { return parseInt(row.dataset.sizeBytes, 10) || 0; }
-    if (column === 'category') { return row.dataset.category || ''; }
     return row.dataset.path || '';
   }
 
-  function applySort(column, dir) {
-    var tbody = document.querySelector('#orphan-table tbody');
+  function applySort(tableId) {
+    var state = sortStates[tableId];
+    var tbody = document.querySelector('#' + tableId + ' tbody');
     if (!tbody) { return; }
     var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr'));
     rows.sort(function (a, b) {
-      var av = cellValue(a, column), bv = cellValue(b, column);
+      var av = cellValue(a, state.column), bv = cellValue(b, state.column);
       var cmp = av < bv ? -1 : av > bv ? 1 : 0;
-      return dir === 'desc' ? -cmp : cmp;
+      return state.dir === 'desc' ? -cmp : cmp;
     });
     rows.forEach(function (row) { tbody.appendChild(row); });
 
-    document.querySelectorAll('th[data-sort]').forEach(function (th) {
+    document.querySelectorAll('#' + tableId + ' th[data-sort]').forEach(function (th) {
       th.classList.remove('sort-asc', 'sort-desc');
-      if (th.dataset.sort === column) { th.classList.add('sort-' + dir); }
+      if (th.dataset.sort === state.column) { th.classList.add('sort-' + state.dir); }
     });
   }
 
   document.addEventListener('click', function (e) {
     var th = e.target.closest('th[data-sort]');
     if (!th) { return; }
+    var table = th.closest('table');
+    if (!table) { return; }
+    var tableId = table.id;
+    var state = sortStates[tableId];
     var column = th.dataset.sort;
-    if (sortState.column === column) {
-      sortState.dir = sortState.dir === 'asc' ? 'desc' : 'asc';
+    if (state.column === column) {
+      state.dir = state.dir === 'asc' ? 'desc' : 'asc';
     } else {
-      sortState = { column: column, dir: column === 'size' ? 'desc' : 'asc' };
+      sortStates[tableId] = { column: column, dir: column === 'size' ? 'desc' : 'asc' };
     }
-    applySort(sortState.column, sortState.dir);
+    applySort(tableId);
   });
 
   document.addEventListener('htmx:afterSwap', function () {
-    applySort(sortState.column, sortState.dir);
+    applySort('download-table');
+    applySort('review-table');
   });
 
-  applySort(sortState.column, sortState.dir);
+  applySort('download-table');
+  applySort('review-table');
 </script>
 
 </body>

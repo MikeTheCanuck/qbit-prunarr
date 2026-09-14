@@ -38,6 +38,15 @@ def _make_file(path, content=b"x" * 1000):
         f.write(content)
 
 
+def _table_region(html: str, table_id: str) -> str:
+    """Slice out just one of the two independent orphan tables (download
+    vs. review) — the two never share a selection surface, so tests need
+    to assert against the right one specifically, not the whole page."""
+    start = html.index(f'id="{table_id}"')
+    end = html.index("</table>", start)
+    return html[start:end]
+
+
 def _swapped_region(html: str) -> str:
     """Return only what HTMX actually swaps into the page.
 
@@ -70,8 +79,7 @@ def test_scan_finds_download_orphan(tmp_path):
         response = client.post("/orphans/scan")
 
     assert response.status_code == 200
-    assert "seed.mkv" in response.text
-    assert "unlinked download" in response.text
+    assert "seed.mkv" in _table_region(response.text, "download-table")
 
 
 def test_scan_result_rows_carry_sort_data_attributes(tmp_path):
@@ -90,9 +98,46 @@ def test_scan_result_rows_carry_sort_data_attributes(tmp_path):
         client = TestClient(app)
         response = client.post("/orphans/scan")
 
-    assert 'data-size-bytes="5000"' in response.text
-    assert 'data-category="unlinked download"' in response.text
-    assert 'data-path="torrents/seed.mkv"' in response.text
+    region = _table_region(response.text, "download-table")
+    assert 'data-size-bytes="5000"' in region
+    assert 'data-path="torrents/seed.mkv"' in region
+
+
+def test_download_and_review_candidates_render_in_separate_tables(tmp_path):
+    """Unlinked-download (mostly safe) and orphaned-media (genuinely
+    ambiguous - could be a safe duplicate or unimported content) never
+    share a table, a select-all checkbox, or a delete form - selecting
+    everything in one is structurally incapable of touching the other."""
+    import os
+    root = str(tmp_path)
+    _make_file(os.path.join(root, "torrents", "seed.mkv"))
+    _make_file(os.path.join(root, "media", "movies", "orphan-movie.mkv"))
+
+    with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
+         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set())), \
+         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set())), \
+         patch("main.PlexClient", return_value=_mock_client(
+             get_all_movie_paths=set(), get_all_episode_paths=set()
+         )):
+        client = TestClient(app)
+        response = client.post("/orphans/scan")
+
+    download_region = _table_region(response.text, "download-table")
+    review_region = _table_region(response.text, "review-table")
+
+    assert "seed.mkv" in download_region
+    assert "orphan-movie.mkv" not in download_region
+
+    assert "orphan-movie.mkv" in review_region
+    assert "seed.mkv" not in review_region
+
+    assert 'id="download-form"' in response.text
+    assert 'id="review-form"' in response.text
+    assert 'id="select-all-download"' in response.text
+    assert 'id="select-all-review"' in response.text
+
+    assert "Needs Review" in response.text
+    assert "safe duplicate" in response.text and "never got imported" in response.text
 
 
 def test_scan_returns_200_with_inline_error_on_unexpected_failure(tmp_path):
@@ -162,8 +207,7 @@ def test_genuinely_empty_service_is_not_treated_as_unusable(tmp_path):
         response = client.post("/orphans/scan")
 
     region = _swapped_region(response.text)
-    assert "movie.mkv" in region
-    assert "orphaned media" in region
+    assert "movie.mkv" in _table_region(response.text, "review-table")
     assert "unusable" not in region.lower()
 
 

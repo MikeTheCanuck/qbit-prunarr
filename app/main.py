@@ -353,17 +353,36 @@ def _enrich_candidate(c: OrphanCandidate) -> dict:
     }
 
 
+_EMPTY_ORPHANS_CONTEXT = {"download_candidates": [], "review_candidates": [], "status_lines": []}
+
+
+def _split_by_category(candidates: list[dict]) -> tuple[list[dict], list[dict]]:
+    """Partition enriched candidates into (unlinked downloads, needs review).
+
+    Kept as two separate lists all the way to the template so the page can
+    render them as two independent tables — separate select-all checkboxes,
+    separate delete forms — making it structurally impossible to bulk-select
+    across both at once. "unlinked download" is mostly safe to bulk-delete;
+    "orphaned media" genuinely isn't (could be a safe duplicate, or content
+    that just hasn't been imported into Sonarr/Radarr yet), so the two
+    categories don't share a selection surface at all.
+    """
+    download = [c for c in candidates if c["category"] == "unlinked download"]
+    review = [c for c in candidates if c["category"] == "orphaned media"]
+    return download, review
+
+
 @app.get("/orphans", response_class=HTMLResponse)
 async def orphans_page(request: Request, flash: Optional[str] = None):
     try:
         return templates.TemplateResponse(
-            request, "orphans.html", {"candidates": [], "error": None, "status_lines": [], "flash": flash}
+            request, "orphans.html", {**_EMPTY_ORPHANS_CONTEXT, "error": None, "flash": flash}
         )
     except Exception:
         return templates.TemplateResponse(
             request,
             "orphans.html",
-            {"candidates": [], "error": "Failed to load orphans page", "status_lines": [], "flash": None},
+            {**_EMPTY_ORPHANS_CONTEXT, "error": "Failed to load orphans page", "flash": None},
         )
 
 
@@ -377,20 +396,22 @@ async def orphans_scan(request: Request):
         # run inline. Offloading to a thread keeps the server responsive.
         raw_candidates, statuses = await asyncio.to_thread(run_scan)
         candidates = [_enrich_candidate(c) for c in raw_candidates]
+        download_candidates, review_candidates = _split_by_category(candidates)
         return templates.TemplateResponse(
             request,
             "orphans.html",
-            {"candidates": candidates, "error": None, "status_lines": _status_lines(statuses)},
+            {
+                "download_candidates": download_candidates,
+                "review_candidates": review_candidates,
+                "error": None,
+                "status_lines": _status_lines(statuses),
+            },
         )
     except Exception:
         return templates.TemplateResponse(
             request,
             "orphans.html",
-            {
-                "candidates": [],
-                "error": "Scan failed — check service connectivity",
-                "status_lines": [],
-            },
+            {**_EMPTY_ORPHANS_CONTEXT, "error": "Scan failed — check service connectivity"},
         )
 
 
@@ -431,14 +452,14 @@ async def delete_single_orphan(inode: int):
         return Response(
             status_code=200,
             media_type="text/html",
-            content=f'<tr id="orphan-row-{inode}"><td colspan="5" style="color:red">Re-verify failed: {e}</td></tr>',
+            content=f'<tr id="orphan-row-{inode}"><td colspan="4" style="color:red">Re-verify failed: {e}</td></tr>',
         )
 
     if fresh is None:
         return Response(
             status_code=200,
             media_type="text/html",
-            content=f'<tr id="orphan-row-{inode}"><td colspan="5">No longer an orphan — skipped</td></tr>',
+            content=f'<tr id="orphan-row-{inode}"><td colspan="4">No longer an orphan — skipped</td></tr>',
         )
 
     try:
@@ -448,7 +469,7 @@ async def delete_single_orphan(inode: int):
         return Response(
             status_code=200,
             media_type="text/html",
-            content=f'<tr id="orphan-row-{inode}"><td colspan="5" style="color:red">Delete failed: {e}</td></tr>',
+            content=f'<tr id="orphan-row-{inode}"><td colspan="4" style="color:red">Delete failed: {e}</td></tr>',
         )
 
 
