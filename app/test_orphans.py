@@ -130,6 +130,41 @@ def test_is_tv_path_does_not_prefix_match_a_similar_subdir_name():
 
 
 
+def test_subtitle_sidecar_is_never_flagged_for_review(tmp_path):
+    """Sonarr/Radarr's API only reports the primary video file per
+    episode/movie - a subtitle sitting next to a perfectly tracked
+    episode would fail this check forever, no matter how correctly it's
+    organized, since the *arr apps never report sidecar paths at all."""
+    root = str(tmp_path)
+    _make_file(os.path.join(root, "media", "tv", "Show", "ep.srt"))
+    result = ScanResult(media_only={666: ["media/tv/Show/ep.srt"]})
+
+    candidates = classify_media_orphans(
+        result, root, tv_subdirs={"media/tv", "media/tv-no-backup"},
+        sonarr_paths=set(), radarr_paths=set(),
+        plex_episode_paths=set(), plex_movie_paths=set(),
+    )
+
+    assert candidates == []
+
+
+def test_sample_directory_video_is_never_flagged_for_review(tmp_path):
+    """Sample/ is a scene-release convention - a short preview clip
+    bundled with a torrent to check quality before committing to the
+    real download. No *arr app or Plex tracks it as real content."""
+    root = str(tmp_path)
+    _make_file(os.path.join(root, "media", "movies", "Movie (2020)", "Sample", "movie-sample.mkv"))
+    result = ScanResult(media_only={777: ["media/movies/Movie (2020)/Sample/movie-sample.mkv"]})
+
+    candidates = classify_media_orphans(
+        result, root, tv_subdirs={"media/tv", "media/tv-no-backup"},
+        sonarr_paths=set(), radarr_paths=set(),
+        plex_episode_paths=set(), plex_movie_paths=set(),
+    )
+
+    assert candidates == []
+
+
 def test_movie_confirmed_by_radarr_and_plex_is_kept(tmp_path):
     root = str(tmp_path)
     _make_file(os.path.join(root, "media", "movies", "movie.mkv"))

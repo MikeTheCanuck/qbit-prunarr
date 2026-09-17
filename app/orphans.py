@@ -101,6 +101,31 @@ def is_tv_path(path: str, tv_subdirs: set[str]) -> bool:
     return any(path == sub or path.startswith(sub + "/") for sub in tv_subdirs)
 
 
+_VIDEO_EXTENSIONS = {
+    ".mkv", ".mp4", ".avi", ".m4v", ".ts", ".m2ts", ".wmv",
+    ".mov", ".mpg", ".mpeg", ".flv", ".webm", ".iso",
+}
+
+
+def _is_media_review_candidate(paths: list[str]) -> bool:
+    """False for files that were never going to match Sonarr/Radarr's own
+    file list, so flagging them as "needs review" would be a permanent,
+    unfixable false positive rather than a real signal.
+
+    Sonarr/Radarr's APIs report only the primary video file per episode
+    or movie — never subtitle sidecars (.srt/.sub), NFO metadata, or
+    artwork sitting next to it, so a companion file next to a perfectly
+    tracked episode would otherwise fail this check forever, no matter
+    how correctly it's organized. A "Sample" directory is a scene-release
+    convention (a short preview clip bundled with a torrent to check
+    quality before committing to the real download) that no *arr app or
+    Plex tracks as real content either.
+    """
+    if any(seg.lower() == "sample" for seg in paths[0].split("/")):
+        return False
+    return any(os.path.splitext(p)[1].lower() in _VIDEO_EXTENSIONS for p in paths)
+
+
 def classify_media_orphans(
     result,
     data_root: str,
@@ -119,6 +144,8 @@ def classify_media_orphans(
     """
     candidates = []
     for inode, paths in result.media_only.items():
+        if not _is_media_review_candidate(paths):
+            continue
         is_tv = any(is_tv_path(p, tv_subdirs) for p in paths)
         arr_paths = sonarr_paths if is_tv else radarr_paths
         plex_paths = plex_episode_paths if is_tv else plex_movie_paths
