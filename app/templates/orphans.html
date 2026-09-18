@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Orphan Trawler</title>
+  <script src="https://unpkg.com/htmx.org@2.0.3"></script>
+  <style>
+    body { font-family: sans-serif; max-width: 1200px; margin: 0 auto; padding: 16px; }
+    h1 { margin-top: 0; }
+    .error-banner { background: #f8d7da; color: #842029; padding: 10px 16px; margin-bottom: 16px; border-radius: 4px; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { padding: 6px 12px; text-align: left; border-bottom: 1px solid #ddd; }
+    th { background: #f8f8f8; }
+    #scan-btn { padding: 8px 16px; background: #0d6efd; color: white; border: none; border-radius: 4px; cursor: pointer; }
+    #scan-btn:disabled { background: #6ea8fe; cursor: wait; }
+    #scan-spinner { margin-left: 10px; color: #555; }
+    #bulk-delete-btn { padding: 8px 16px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; }
+    #bulk-delete-btn:disabled { background: #aaa; cursor: default; }
+    button[hx-delete] { padding: 4px 10px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; }
+    th.sortable { cursor: pointer; user-select: none; }
+    th.sortable::after { content: ''; margin-left: 4px; color: #0d6efd; }
+    th.sort-asc::after { content: '\2191'; }
+    th.sort-desc::after { content: '\2193'; }
+    h2 { margin-top: 32px; margin-bottom: 4px; }
+    .section-subtitle { color: #555; margin-top: 0; margin-bottom: 12px; max-width: 700px; }
+    .needs-review {
+      background: #fff8e1;
+      border: 2px solid #f0ad4e;
+      border-radius: 6px;
+      padding: 4px 20px 20px;
+      margin-top: 32px;
+    }
+    .needs-review h2 { color: #7a5c00; margin-top: 20px; }
+    .needs-review table { background: white; }
+  </style>
+</head>
+<body>
+
+<h1>Orphan Trawler</h1>
+<p><a href="/">&larr; qBit Pruner</a></p>
+{% if flash %}<div class="error-banner">{{ flash }}</div>{% endif %}
+<button id="scan-btn" hx-post="/orphans/scan" hx-target="#scan-results" hx-swap="outerHTML" hx-select="#scan-results"
+        hx-indicator="#scan-spinner" hx-disabled-elt="this">
+  Scan Now
+</button>
+<span id="scan-spinner" class="htmx-indicator">Scanning — this can take a while on a large library…</span>
+
+<div id="scan-results">
+  {% if error %}<div class="error-banner">{{ error }}</div>{% endif %}
+
+  {% if status_lines %}
+  <ul id="service-status">
+    {% for line in status_lines %}<li>{{ line }}</li>{% endfor %}
+  </ul>
+  {% endif %}
+
+  <h2>Unlinked Downloads</h2>
+  <p class="section-subtitle">Not referenced by any active torrent — generally safe to reclaim.</p>
+  <form method="post" action="/orphans/delete" id="download-form">
+    <table id="download-table">
+      <thead>
+        <tr>
+          <th><input type="checkbox" id="select-all-download"></th>
+          <th class="sortable" data-sort="path">Path</th>
+          <th class="sortable" data-sort="size">Size</th>
+          <th>Delete</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for c in download_candidates %}
+          {% include "_orphan_row.html" %}
+        {% endfor %}
+      </tbody>
+    </table>
+  </form>
+
+  <div class="needs-review">
+    <h2>Needs Review</h2>
+    <p class="section-subtitle">Sonarr/Radarr + Plex don't confirm this file. Two likely explanations: it's a safe duplicate already tracked elsewhere, or it's real content that never got imported. Check each one before deleting — don't assume either way.</p>
+    <form method="post" action="/orphans/delete" id="review-form">
+      <table id="review-table">
+        <thead>
+          <tr>
+            <th><input type="checkbox" id="select-all-review"></th>
+            <th class="sortable" data-sort="path">Path</th>
+            <th class="sortable" data-sort="size">Size</th>
+            <th>Delete</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for c in review_candidates %}
+            {% include "_orphan_row.html" %}
+          {% endfor %}
+        </tbody>
+      </table>
+    </form>
+  </div>
+</div>
+
+<script>
+  // Default sort: size descending, so the real space-hogs surface above
+  // the sea of near-zero metadata-file rows a single orphaned torrent can
+  // fragment into. Tables can be large (thousands of rows on a real
+  // library) so this sorts in place rather than re-rendering via the
+  // server. Download and Review tables sort independently of each other.
+  var sortStates = {
+    'download-table': { column: 'size', dir: 'desc' },
+    'review-table': { column: 'size', dir: 'desc' }
+  };
+
+  function cellValue(row, column) {
+    if (column === 'size') { return parseInt(row.dataset.sizeBytes, 10) || 0; }
+    return row.dataset.path || '';
+  }
+
+  function applySort(tableId) {
+    var state = sortStates[tableId];
+    var tbody = document.querySelector('#' + tableId + ' tbody');
+    if (!tbody) { return; }
+    var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr'));
+    rows.sort(function (a, b) {
+      var av = cellValue(a, state.column), bv = cellValue(b, state.column);
+      var cmp = av < bv ? -1 : av > bv ? 1 : 0;
+      return state.dir === 'desc' ? -cmp : cmp;
+    });
+    rows.forEach(function (row) { tbody.appendChild(row); });
+
+    document.querySelectorAll('#' + tableId + ' th[data-sort]').forEach(function (th) {
+      th.classList.remove('sort-asc', 'sort-desc');
+      if (th.dataset.sort === state.column) { th.classList.add('sort-' + state.dir); }
+    });
+  }
+
+  document.addEventListener('click', function (e) {
+    var th = e.target.closest('th[data-sort]');
+    if (!th) { return; }
+    var table = th.closest('table');
+    if (!table) { return; }
+    var tableId = table.id;
+    var state = sortStates[tableId];
+    var column = th.dataset.sort;
+    if (state.column === column) {
+      state.dir = state.dir === 'asc' ? 'desc' : 'asc';
+    } else {
+      sortStates[tableId] = { column: column, dir: column === 'size' ? 'desc' : 'asc' };
+    }
+    applySort(tableId);
+  });
+
+  document.addEventListener('htmx:afterSwap', function () {
+    applySort('download-table');
+    applySort('review-table');
+  });
+
+  applySort('download-table');
+  applySort('review-table');
+</script>
+
+</body>
+</html>

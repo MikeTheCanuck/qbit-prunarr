@@ -48,3 +48,9 @@ class QBitClient:
             },
         )
         response.raise_for_status()
+
+    def get_all_content_paths(self) -> set[str]:
+        """Return content_path for every torrent qBittorrent currently knows about."""
+        response = self._session.get(f"{self._base_url}/api/v2/torrents/info")
+        response.raise_for_status()
+        return {t["content_path"] for t in response.json() if t.get("content_path")}
