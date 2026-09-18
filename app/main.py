@@ -1,4 +1,4 @@
-"""qBit Pruner — FastAPI app."""
+"""qBit Prunarr — FastAPI app."""
 import asyncio
 import os
 import time
