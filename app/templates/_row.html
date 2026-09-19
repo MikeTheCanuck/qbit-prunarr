@@ -1,13 +1,14 @@
-<tr id="row-{{ t.hash }}">
+<tr id="row-{{ t.hash }}" data-name="{{ t.name }}" data-size="{{ t.size_gb }}" data-inactive="{{ t.days_inactive }}">
   <td>
     <input type="checkbox" name="hashes" value="{{ t.hash }}"
            class="torrent-cb" data-size="{{ t.size_gb }}"
            data-bucket="{{ bucket.label }}">
   </td>
   <td>{{ t.name }}</td>
-  <td>{{ t.size_gb }} GB</td>
-  <td>{{ t.days_inactive }}</td>
+  <td class="num">{{ t.size_gb }}</td>
+  <td class="num">{{ t.days_inactive }}</td>
   <td>{{ t.category }}</td>
+  <td>{{ t.tags }}</td>
   <td>
     <button hx-delete="/torrents/{{ t.hash }}"
             hx-target="#row-{{ t.hash }}"
