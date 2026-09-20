@@ -6,39 +6,58 @@
   <title>Orphan Trawler</title>
   <script src="https://unpkg.com/htmx.org@2.0.3"></script>
   <style>
-    body { font-family: sans-serif; max-width: 1200px; margin: 0 auto; padding: 16px; }
-    h1 { margin-top: 0; }
-    .error-banner { background: #f8d7da; color: #842029; padding: 10px 16px; margin-bottom: 16px; border-radius: 4px; }
-    table { border-collapse: collapse; width: 100%; }
-    th, td { padding: 6px 12px; text-align: left; border-bottom: 1px solid #ddd; }
-    th { background: #f8f8f8; }
-    #scan-btn { padding: 8px 16px; background: #0d6efd; color: white; border: none; border-radius: 4px; cursor: pointer; }
-    #scan-btn:disabled { background: #6ea8fe; cursor: wait; }
-    #scan-spinner { margin-left: 10px; color: #555; }
-    #bulk-delete-btn { padding: 8px 16px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; }
-    #bulk-delete-btn:disabled { background: #aaa; cursor: default; }
-    button[hx-delete] { padding: 4px 10px; background: #dc3545; color: white; border: none; border-radius: 4px; cursor: pointer; }
+    :root {
+      --bg: #1f2126;
+      --panel-bg: #26282e;
+      --header-bg: #2a2d33;
+      --row-hover: #2e3138;
+      --border: #34363c;
+      --text: #d5d6d8;
+      --text-muted: #9aa0a6;
+      --accent: #3ba7d9;
+      --accent-hover: #2f8ebf;
+      --danger: #c8302a;
+      --danger-hover: #a3241f;
+      --warn-bg: #332912;
+      --warn-border: #a67c00;
+      --warn-text: #e0b84d;
+    }
+    body { font-family: sans-serif; max-width: 1200px; margin: 0 auto; padding: 16px; background: var(--bg); color: var(--text); }
+    h1 { margin-top: 0; color: var(--text); }
+    h2 { margin-top: 32px; margin-bottom: 4px; color: var(--text); }
+    .section-subtitle { color: var(--text-muted); margin-top: 0; margin-bottom: 12px; max-width: 700px; }
+    .error-banner { background: #4a1f22; color: #f5b8bb; padding: 10px 16px; margin-bottom: 16px; border-radius: 4px; }
+    table { border-collapse: collapse; width: 100%; background: var(--panel-bg); }
+    th, td { padding: 6px 12px; text-align: left; border-bottom: 1px solid var(--border); }
+    th { background: var(--header-bg); color: var(--text-muted); font-weight: 600; }
+    #scan-btn { padding: 8px 16px; background: var(--accent); color: white; border: none; border-radius: 4px; cursor: pointer; }
+    #scan-btn:hover:not(:disabled) { background: var(--accent-hover); }
+    #scan-btn:disabled { background: #4a4d54; color: var(--text-muted); cursor: wait; }
+    #scan-spinner { margin-left: 10px; color: var(--text-muted); }
+    #bulk-delete-btn { padding: 8px 16px; background: var(--danger); color: white; border: none; border-radius: 4px; cursor: pointer; }
+    #bulk-delete-btn:disabled { background: #4a4d54; color: var(--text-muted); cursor: default; }
+    button[hx-delete] { padding: 4px 10px; background: var(--danger); color: white; border: none; border-radius: 4px; cursor: pointer; }
+    button[hx-delete]:hover { background: var(--danger-hover); }
     th.sortable { cursor: pointer; user-select: none; }
-    th.sortable::after { content: ''; margin-left: 4px; color: #0d6efd; }
+    th.sortable::after { content: ''; margin-left: 4px; color: var(--accent); }
     th.sort-asc::after { content: '\2191'; }
     th.sort-desc::after { content: '\2193'; }
-    h2 { margin-top: 32px; margin-bottom: 4px; }
-    .section-subtitle { color: #555; margin-top: 0; margin-bottom: 12px; max-width: 700px; }
     .needs-review {
-      background: #fff8e1;
-      border: 2px solid #f0ad4e;
+      background: var(--warn-bg);
+      border: 2px solid var(--warn-border);
       border-radius: 6px;
       padding: 4px 20px 20px;
       margin-top: 32px;
     }
-    .needs-review h2 { color: #7a5c00; margin-top: 20px; }
-    .needs-review table { background: white; }
+    .needs-review h2 { color: var(--warn-text); margin-top: 20px; }
+    .needs-review .section-subtitle { color: var(--warn-text); opacity: 0.85; }
+    .needs-review table { background: var(--panel-bg); }
   </style>
 </head>
 <body>
 
 <h1>Orphan Trawler</h1>
-<p><a href="/">&larr; qBit Pruner</a></p>
+<p><a href="/">&larr; qBit Prunarr</a></p>
 {% if flash %}<div class="error-banner">{{ flash }}</div>{% endif %}
 <button id="scan-btn" hx-post="/orphans/scan" hx-target="#scan-results" hx-swap="outerHTML" hx-select="#scan-results"
         hx-indicator="#scan-spinner" hx-disabled-elt="this">
