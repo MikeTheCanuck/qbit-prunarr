@@ -62,10 +62,18 @@ def _get_tag() -> str:
     return os.environ.get("QBIT_TAG", "only-for-ratio")
 
 
+def _format_gb(size_bytes: int) -> str:
+    """1 decimal place at 1GB+ (2 decimals of precision on a multi-GB
+    file is noise, not signal, for a "should I delete this" decision);
+    2 decimals below 1GB, where the extra precision can actually matter."""
+    gb = size_bytes / 1e9
+    return f"{gb:.1f}" if gb >= 1 else f"{gb:.2f}"
+
+
 def _enrich(torrent: dict) -> dict:
     t = dict(torrent)
     t["days_inactive"] = int((time.time() - t["last_activity"]) / 86400)
-    t["size_gb"] = round(t["size"] / 1e9, 2)
+    t["size_gb"] = _format_gb(t["size"])
     return t
 
 
@@ -353,7 +361,7 @@ def _enrich_candidate(c: OrphanCandidate) -> dict:
         "display_path": c.paths[0],
         "extra_paths": len(c.paths) - 1,
         "category": c.category,
-        "size_gb": round(c.size_bytes / 1e9, 2),
+        "size_gb": _format_gb(c.size_bytes),
         "size_bytes": c.size_bytes,
     }
 

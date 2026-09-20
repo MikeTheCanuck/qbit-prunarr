@@ -241,6 +241,21 @@ def test_index_title_is_prunarr():
 
 
 # ---------------------------------------------------------------------------
+# Test: _format_gb precision (1 decimal at 1GB+, 2 decimals below)
+# ---------------------------------------------------------------------------
+
+def test_format_gb_uses_one_decimal_at_and_above_one_gb():
+    assert main._format_gb(34_440_000_000) == "34.4"
+    assert main._format_gb(1_000_000_000) == "1.0"
+    assert main._format_gb(10_000_000_000) == "10.0"
+
+
+def test_format_gb_uses_two_decimals_below_one_gb():
+    assert main._format_gb(500_000_000) == "0.50"
+    assert main._format_gb(1_000_000) == "0.00"
+
+
+# ---------------------------------------------------------------------------
 # Test: Size column header is "Size (GB)" and cell shows a bare number
 # (no trailing "GB" suffix, per v2 cleanup)
 # ---------------------------------------------------------------------------
