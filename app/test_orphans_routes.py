@@ -486,3 +486,98 @@ def test_bulk_delete_reports_failures_via_flash_instead_of_silently_dropping_the
     assert response.status_code == 302
     assert "flash=" in response.headers["location"]
     assert os.path.exists(path_a)
+
+
+# --- orphan grouping -------------------------------------------------
+
+from contextlib import contextmanager
+
+
+@contextmanager
+def _services(qbit_paths=()):
+    with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set(qbit_paths))), \
+         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set(), get_all_queue_paths=set())), \
+         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set(), get_all_queue_paths=set())), \
+         patch("main.PlexClient", return_value=_mock_client(
+             get_all_movie_paths=set(), get_all_episode_paths=set()
+         )):
+        yield
+
+
+BLUEBIRD = "torrents/completed/radarr/BLUEBIRD"
+OTHER_MOVIE = "torrents/completed/radarr/Other.Movie"
+
+
+def _make_bluebird(root):
+    """The spec's motivating shape: a fully orphaned multi-level disc rip
+    (with an empty, never-populated subdir) next to a torrent qBit still
+    tracks."""
+    import os
+    base = os.path.join(root, *BLUEBIRD.split("/"))
+    _make_file(os.path.join(base, "BDMV", "STREAM", "00000.m2ts"), content=b"x" * 5000)
+    _make_file(os.path.join(base, "BDMV", "BACKUP", "CLIPINF", "00153.clpi"), content=b"x" * 10)
+    _make_file(os.path.join(base, "BDMV", "index.bdmv"), content=b"x" * 20)
+    os.makedirs(os.path.join(base, "BDMV", "AUXDATA"))
+    _make_file(os.path.join(root, *OTHER_MOVIE.split("/"), "movie.mkv"), content=b"x" * 300)
+
+
+def test_fully_orphaned_directory_renders_as_one_collapsed_group(tmp_path):
+    _make_bluebird(str(tmp_path))
+
+    with _services(qbit_paths={OTHER_MOVIE}):
+        response = TestClient(app).post("/orphans/scan")
+
+    region = _table_region(response.text, "download-table")
+    assert f'data-path="{BLUEBIRD}"' in region
+    assert 'data-size-bytes="5030"' in region
+    assert "(3 files)" in region
+    assert 'class="orphan-unit orphan-group"' in region  # collapsed: no "expanded"
+    assert region.count('class="group-child"') == 3
+    assert main._group_cache[BLUEBIRD].size_bytes == 5030
+
+
+def test_group_children_show_paths_relative_to_group_root(tmp_path):
+    _make_bluebird(str(tmp_path))
+
+    with _services(qbit_paths={OTHER_MOVIE}):
+        response = TestClient(app).post("/orphans/scan")
+
+    region = _table_region(response.text, "download-table")
+    assert "BDMV/BACKUP/CLIPINF/00153.clpi" in region
+    assert f"{BLUEBIRD}/BDMV/BACKUP/CLIPINF/00153.clpi" not in region
+
+
+def test_group_does_not_swallow_a_still_tracked_sibling(tmp_path):
+    _make_bluebird(str(tmp_path))
+
+    with _services(qbit_paths={OTHER_MOVIE}):
+        response = TestClient(app).post("/orphans/scan")
+
+    assert "Other.Movie" not in _table_region(response.text, "download-table")
+
+
+def test_standalone_orphans_still_render_as_ordinary_units(tmp_path):
+    import os
+    _make_file(os.path.join(str(tmp_path), "torrents", "seed.mkv"), content=b"x" * 5000)
+
+    with _services():
+        response = TestClient(app).post("/orphans/scan")
+
+    region = _table_region(response.text, "download-table")
+    assert '<tbody class="orphan-unit" data-path="torrents/seed.mkv" data-size-bytes="5000">' in region
+    assert "orphan-group" not in region
+    assert main._group_cache == {}
+
+
+def test_needs_review_rows_are_never_grouped(tmp_path):
+    import os
+    root = str(tmp_path)
+    _make_file(os.path.join(root, "media", "movies", "Film (2020)", "a.mkv"))
+    _make_file(os.path.join(root, "media", "movies", "Film (2020)", "b.mkv"))
+
+    with _services():
+        response = TestClient(app).post("/orphans/scan")
+
+    region = _table_region(response.text, "review-table")
+    assert "a.mkv" in region and "b.mkv" in region
+    assert "orphan-group" not in region

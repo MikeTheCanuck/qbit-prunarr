@@ -1,5 +1,6 @@
 """qBit Prunarr — FastAPI app."""
 import asyncio
+import hashlib
 import os
 import time
 from typing import Optional
@@ -10,6 +11,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from inode_scan import scan
+from grouping import OrphanGroup, group_download_orphans
 from orphans import (
     OrphanCandidate,
     classify_download_orphans,
@@ -41,6 +43,7 @@ DOWNLOAD_SUBDIRS = ["torrents", "usenet"]
 QBIT_SUBDIRS = ["torrents"]  # subdirs qBittorrent has authority over — not usenet
 
 _scan_cache: dict[int, OrphanCandidate] = {}
+_group_cache: dict[str, OrphanGroup] = {}
 
 
 def _current_data_root() -> str:
@@ -351,6 +354,23 @@ def run_scan() -> tuple[list[OrphanCandidate], dict[str, str]]:
     for c in candidates:
         _scan_cache[c.inode] = c
 
+    # Ground truth for grouping is every file found under the download
+    # roots, orphaned or not: download_only covers both orphans and files
+    # qBit/*arr still track, and linked files that happen to live under a
+    # download root are real contents of those directories too.
+    download_files = _flatten(result.download_only) + [
+        p for p in result.linked
+        if any(p == sub or p.startswith(sub + "/") for sub in DOWNLOAD_SUBDIRS)
+    ]
+    groups, _ = group_download_orphans(
+        [c for c in candidates if c.category == "unlinked download"],
+        download_files,
+        set(DOWNLOAD_SUBDIRS),
+    )
+    _group_cache.clear()
+    for g in groups:
+        _group_cache[g.root] = g
+
     statuses = {
         "qBittorrent": qbit_status,
         "Sonarr": sonarr_status,
@@ -380,6 +400,7 @@ def _status_lines(statuses: dict[str, str]) -> list[str]:
 
 def _enrich_candidate(c: OrphanCandidate) -> dict:
     return {
+        "kind": "file",
         "inode": c.inode,
         "display_path": c.paths[0],
         "extra_paths": len(c.paths) - 1,
@@ -389,7 +410,42 @@ def _enrich_candidate(c: OrphanCandidate) -> dict:
     }
 
 
-_EMPTY_ORPHANS_CONTEXT = {"download_candidates": [], "review_candidates": [], "status_lines": []}
+def _group_dom_id(root: str) -> str:
+    """Stable, attribute-safe element id for a group - root paths contain
+    spaces, brackets and dots that can't go in an id selector as-is."""
+    return "orphan-group-" + hashlib.sha1(root.encode()).hexdigest()[:12]
+
+
+def _enrich_group(g: OrphanGroup) -> dict:
+    return {
+        "kind": "group",
+        "root": g.root,
+        "dom_id": _group_dom_id(g.root),
+        "display_path": g.root + "/",
+        "file_count": len(g.members),
+        "size_bytes": g.size_bytes,
+        "size_gb": _format_gb(g.size_bytes),
+        "children": [
+            {
+                **_enrich_candidate(m),
+                "display_path": os.path.relpath(m.paths[0], g.root),
+                "is_child": True,
+            }
+            for m in g.members
+        ],
+    }
+
+
+def _download_units(download_candidates: list[dict]) -> list[dict]:
+    """Unlinked Downloads table rows: one unit per cached group, plus
+    every candidate that isn't a member of any group."""
+    grouped = {m.inode for g in _group_cache.values() for m in g.members}
+    units = [_enrich_group(g) for g in _group_cache.values()]
+    units += [c for c in download_candidates if c["inode"] not in grouped]
+    return units
+
+
+_EMPTY_ORPHANS_CONTEXT = {"download_units": [], "review_candidates": [], "status_lines": []}
 
 
 def _split_by_category(candidates: list[dict]) -> tuple[list[dict], list[dict]]:
@@ -437,7 +493,7 @@ async def orphans_scan(request: Request):
             request,
             "orphans.html",
             {
-                "download_candidates": download_candidates,
+                "download_units": _download_units(download_candidates),
                 "review_candidates": review_candidates,
                 "error": None,
                 "status_lines": _status_lines(statuses),

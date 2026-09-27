@@ -1,0 +1,24 @@
+<tbody id="{{ g.dom_id }}" class="orphan-unit orphan-group" data-path="{{ g.root }}" data-size-bytes="{{ g.size_bytes }}">
+  <tr class="group-header">
+    <td><input type="checkbox" name="group_roots" value="{{ g.root }}" class="orphan-cb"></td>
+    <td>
+      <button type="button" class="group-toggle" aria-expanded="false" title="Show files">&#9656;</button>
+      {{ g.display_path }} <span class="group-count">({{ g.file_count }} files)</span>
+    </td>
+    <td>{{ g.size_gb }} GB</td>
+    <td>
+      <button class="group-delete"
+              hx-post="/orphans/groups/delete"
+              hx-vals='{"root": {{ g.root|tojson }}}'
+              hx-target="#{{ g.dom_id }}"
+              hx-swap="outerHTML"
+              hx-confirm="Delete all {{ g.file_count }} files under {{ g.display_path }}?"
+              hx-disabled-elt="this">
+        Delete
+      </button>
+    </td>
+  </tr>
+  {% for c in g.children %}
+    {% include "_orphan_row.html" %}
+  {% endfor %}
+</tbody>
