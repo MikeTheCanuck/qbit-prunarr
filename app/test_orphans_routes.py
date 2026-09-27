@@ -581,3 +581,98 @@ def test_needs_review_rows_are_never_grouped(tmp_path):
     region = _table_region(response.text, "review-table")
     assert "a.mkv" in region and "b.mkv" in region
     assert "orphan-group" not in region
+
+
+def test_group_delete_removes_every_file_and_the_emptied_tree(tmp_path):
+    import os
+    root = str(tmp_path)
+    _make_bluebird(root)
+
+    with _services(qbit_paths={OTHER_MOVIE}):
+        client = TestClient(app)
+        client.post("/orphans/scan")
+        response = client.post("/orphans/groups/delete", data={"root": BLUEBIRD})
+
+    assert response.status_code == 200
+    assert response.text == ""
+    assert not os.path.exists(os.path.join(root, *BLUEBIRD.split("/")))  # incl. empty AUXDATA/
+    assert os.path.exists(os.path.join(root, *OTHER_MOVIE.split("/"), "movie.mkv"))
+
+
+def test_group_delete_is_best_effort_and_survivors_come_back_standalone(tmp_path):
+    import os
+    root = str(tmp_path)
+    _make_bluebird(root)
+    clpi = os.path.join(root, *BLUEBIRD.split("/"), "BDMV", "BACKUP", "CLIPINF", "00153.clpi")
+    real_delete = main.delete_orphan
+
+    def flaky_delete(data_root, relative_path, boundary):
+        if relative_path.endswith("00153.clpi"):
+            raise OSError("permission denied")
+        return real_delete(data_root, relative_path, boundary)
+
+    with _services(qbit_paths={OTHER_MOVIE}):
+        client = TestClient(app)
+        client.post("/orphans/scan")
+        with patch("main.delete_orphan", side_effect=flaky_delete):
+            response = client.post("/orphans/groups/delete", data={"root": BLUEBIRD})
+        rescan = client.post("/orphans/scan")
+
+    assert "1 of 3 deletes failed" in response.text
+    assert f'id="{main._group_dom_id(BLUEBIRD)}"' in response.text
+    assert os.path.exists(clpi)
+    assert not os.path.exists(os.path.join(root, *BLUEBIRD.split("/"), "BDMV", "STREAM"))
+
+    region = _table_region(rescan.text, "download-table")
+    assert f"{BLUEBIRD}/BDMV/BACKUP/CLIPINF/00153.clpi" in region  # full path, standalone
+    assert "orphan-group" not in region
+
+
+def test_group_delete_skips_members_that_are_no_longer_orphans(tmp_path):
+    import os
+    root = str(tmp_path)
+    _make_bluebird(root)
+
+    with _services(qbit_paths={OTHER_MOVIE}):
+        client = TestClient(app)
+        client.post("/orphans/scan")
+    # Between scan and click, the torrent was re-added in qBittorrent.
+    with _services(qbit_paths={OTHER_MOVIE, BLUEBIRD}):
+        response = client.post("/orphans/groups/delete", data={"root": BLUEBIRD})
+
+    assert response.status_code == 200
+    assert "no longer" in response.text.lower()
+    assert os.path.exists(os.path.join(root, *BLUEBIRD.split("/"), "BDMV", "STREAM", "00000.m2ts"))
+    # A live torrent's empty subdirs are left alone too.
+    assert os.path.isdir(os.path.join(root, *BLUEBIRD.split("/"), "BDMV", "AUXDATA"))
+
+
+def test_group_delete_with_unknown_root_deletes_nothing(tmp_path):
+    import os
+    root = str(tmp_path)
+    _make_bluebird(root)
+
+    with _services(qbit_paths={OTHER_MOVIE}):
+        client = TestClient(app)
+        client.post("/orphans/scan")
+        stale = client.post("/orphans/groups/delete", data={"root": "torrents/completed/radarr"})
+        forged = client.post("/orphans/groups/delete", data={"root": "../../etc"})
+
+    assert stale.status_code == 200 and stale.text == ""
+    assert forged.status_code == 200 and forged.text == ""
+    assert os.path.exists(os.path.join(root, *BLUEBIRD.split("/"), "BDMV", "STREAM", "00000.m2ts"))
+
+
+def test_group_delete_reports_reverify_failure_without_deleting(tmp_path):
+    import os
+    root = str(tmp_path)
+    _make_bluebird(root)
+
+    with _services(qbit_paths={OTHER_MOVIE}):
+        client = TestClient(app)
+        client.post("/orphans/scan")
+        with patch("main.run_scan", side_effect=RuntimeError("disk fell off")):
+            response = client.post("/orphans/groups/delete", data={"root": BLUEBIRD})
+
+    assert "Re-verify failed" in response.text
+    assert os.path.exists(os.path.join(root, *BLUEBIRD.split("/"), "BDMV", "index.bdmv"))

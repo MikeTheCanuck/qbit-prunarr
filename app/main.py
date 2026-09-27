@@ -3,6 +3,7 @@ import asyncio
 import hashlib
 import os
 import time
+from html import escape
 from typing import Optional
 from urllib.parse import quote
 
@@ -19,6 +20,7 @@ from orphans import (
     delete_orphan,
     is_tv_path,
     path_tracked,
+    prune_empty_tree,
 )
 from pathmap import to_relative
 from plex import PlexClient
@@ -563,6 +565,76 @@ async def delete_single_orphan(inode: int):
             media_type="text/html",
             content=f'<tr id="orphan-row-{inode}"><td colspan="4" style="color:red">Delete failed: {e}</td></tr>',
         )
+
+
+def _under(path: str, root: str) -> bool:
+    return path == root or path.startswith(root + "/")
+
+
+def _delete_group(
+    data_root: str, group: OrphanGroup, fresh: list[OrphanCandidate]
+) -> tuple[int, int, int]:
+    """Best-effort delete of a group's members, re-verified against a
+    fresh scan. Returns (deleted, failed, skipped).
+
+    Only inodes that were members at scan time are touched - a file that
+    newly appeared in the folder since then was never shown to the user
+    as part of this group. A member missing from the fresh scan (tracked
+    again) or that grew a hardlink outside the group root is skipped
+    rather than deleted, and any skip also cancels empty-tree pruning.
+    """
+    fresh_by_inode = {c.inode: c for c in fresh if c.category == "unlinked download"}
+    deleted = failed = skipped = 0
+    for member in group.members:
+        candidate = fresh_by_inode.get(member.inode)
+        if candidate is None or not all(_under(p, group.root) for p in candidate.paths):
+            skipped += 1
+            continue
+        try:
+            _delete_candidate(data_root, candidate)
+            deleted += 1
+        except (OSError, ValueError):
+            failed += 1
+    # A skipped member means the folder is live again (torrent re-added)
+    # - don't touch even its empty subdirectories.
+    if not skipped:
+        try:
+            prune_empty_tree(data_root, group.root, _boundary_for(group.root))
+        except (OSError, ValueError):
+            pass
+    return deleted, failed, skipped
+
+
+def _group_message(dom_id: str, message: str, error: bool = False) -> Response:
+    style = ' style="color:red"' if error else ""
+    return Response(
+        status_code=200,
+        media_type="text/html",
+        content=f'<tbody id="{dom_id}"><tr><td colspan="4"{style}>{escape(message)}</td></tr></tbody>',
+    )
+
+
+@app.post("/orphans/groups/delete")
+async def delete_orphan_group(root: str = Form(...)):
+    # The posted root is only a cache key - never a filesystem path. An
+    # unknown root (stale page, or anything hand-crafted) deletes nothing.
+    group = _group_cache.get(root)
+    if group is None:
+        return Response(status_code=200, content="")
+    dom_id = _group_dom_id(root)
+
+    try:
+        fresh, _ = await asyncio.to_thread(run_scan)
+    except Exception as e:
+        return _group_message(dom_id, f"Re-verify failed: {e}", error=True)
+
+    deleted, failed, skipped = _delete_group(_current_data_root(), group, fresh)
+    total = len(group.members)
+    if failed:
+        return _group_message(dom_id, f"{failed} of {total} deletes failed — check logs", error=True)
+    if skipped:
+        return _group_message(dom_id, f"Deleted {deleted}; {skipped} no longer orphans — skipped")
+    return Response(status_code=200, content="")
 
 
 @app.post("/orphans/delete")
