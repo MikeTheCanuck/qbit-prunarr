@@ -70,21 +70,39 @@ def path_tracked(path: str, tracked: set[str]) -> bool:
         current = parent if parent != current else ""
 
 
-def classify_download_orphans(result, data_root: str, qbit_paths: set[str] | None) -> list[OrphanCandidate]:
-    """Flag download-side files with no active torrent referencing them."""
-    if qbit_paths is None:
+def classify_download_orphans(
+    result, data_root: str, qbit_paths: set[str] | None, arr_queue_paths: set[str] | None
+) -> list[OrphanCandidate]:
+    """Flag download-side files with no active torrent referencing them.
+
+    qBittorrent isn't the only thing that can still want a download-side
+    file: Sonarr/Radarr keep their own queue of downloads they consider
+    active, including ones stuck "unable to import automatically" (a
+    title-mismatch failure) — the file is real and still wanted, but
+    nothing has hardlinked it into media/ yet, and depending on the
+    *arr app's "remove completed downloads" setting the qBittorrent entry
+    for it can already be gone. Checking only qbit_paths would flag that
+    file as a safe bulk-delete candidate. arr_queue_paths is the same
+    fail-closed shape as qbit_paths: None means that signal is unusable
+    (unreachable, or not configured), so nothing in this category is
+    flagged rather than risk deleting a file either side still wants.
+    """
+    if qbit_paths is None or arr_queue_paths is None:
         return []
     candidates = []
     for inode, paths in result.download_only.items():
-        if not any(path_tracked(p, qbit_paths) for p in paths):
-            candidates.append(
-                OrphanCandidate(
-                    inode=inode,
-                    paths=paths,
-                    category="unlinked download",
-                    size_bytes=_file_size(data_root, paths),
-                )
+        if any(path_tracked(p, qbit_paths) for p in paths):
+            continue
+        if any(path_tracked(p, arr_queue_paths) for p in paths):
+            continue
+        candidates.append(
+            OrphanCandidate(
+                inode=inode,
+                paths=paths,
+                category="unlinked download",
+                size_bytes=_file_size(data_root, paths),
             )
+        )
     return candidates
 
 

@@ -27,7 +27,7 @@ def test_download_only_file_not_in_qbit_is_orphan(tmp_path):
     _make_file(os.path.join(root, "torrents", "seed.mkv"))
     result = ScanResult(download_only={111: ["torrents/seed.mkv"]})
 
-    candidates = classify_download_orphans(result, root, qbit_paths=set())
+    candidates = classify_download_orphans(result, root, qbit_paths=set(), arr_queue_paths=set())
 
     assert len(candidates) == 1
     assert candidates[0].category == "unlinked download"
@@ -39,7 +39,35 @@ def test_download_only_file_tracked_by_qbit_is_kept(tmp_path):
     _make_file(os.path.join(root, "torrents", "active.mkv"))
     result = ScanResult(download_only={222: ["torrents/active.mkv"]})
 
-    candidates = classify_download_orphans(result, root, qbit_paths={"torrents/active.mkv"})
+    candidates = classify_download_orphans(
+        result, root, qbit_paths={"torrents/active.mkv"}, arr_queue_paths=set()
+    )
+
+    assert candidates == []
+
+
+def test_download_only_file_tracked_by_arr_queue_is_kept(tmp_path):
+    """A file stuck 'unable to import automatically' can be dropped from
+    qBittorrent (per the *arr app's own cleanup settings) well before
+    Sonarr/Radarr give up on it - the queue signal has to be able to save
+    it on its own, independent of qbit_paths."""
+    root = str(tmp_path)
+    _make_file(os.path.join(root, "torrents", "stuck-import.mkv"))
+    result = ScanResult(download_only={223: ["torrents/stuck-import.mkv"]})
+
+    candidates = classify_download_orphans(
+        result, root, qbit_paths=set(), arr_queue_paths={"torrents/stuck-import.mkv"}
+    )
+
+    assert candidates == []
+
+
+def test_arr_queue_unreachable_fails_closed(tmp_path):
+    root = str(tmp_path)
+    _make_file(os.path.join(root, "torrents", "seed.mkv"))
+    result = ScanResult(download_only={224: ["torrents/seed.mkv"]})
+
+    candidates = classify_download_orphans(result, root, qbit_paths=set(), arr_queue_paths=None)
 
     assert candidates == []
 
@@ -59,7 +87,7 @@ def test_multifile_torrent_dir_covers_its_files(tmp_path):
     )
 
     candidates = classify_download_orphans(
-        result, root, qbit_paths={"torrents/completed/Show.S01.1080p-GRP"}
+        result, root, qbit_paths={"torrents/completed/Show.S01.1080p-GRP"}, arr_queue_paths=set()
     )
 
     assert candidates == []
@@ -70,7 +98,9 @@ def test_multifile_torrent_dir_with_trailing_slash_covers_its_files(tmp_path):
     _make_file(os.path.join(root, "torrents", "Pack", "a.mkv"))
     result = ScanResult(download_only={1003: ["torrents/Pack/a.mkv"]})
 
-    candidates = classify_download_orphans(result, root, qbit_paths={"torrents/Pack/"})
+    candidates = classify_download_orphans(
+        result, root, qbit_paths={"torrents/Pack/"}, arr_queue_paths=set()
+    )
 
     assert candidates == []
 
@@ -85,7 +115,7 @@ def test_empty_string_tracked_entry_covers_every_path(tmp_path):
     _make_file(os.path.join(root, "torrents", "seed.mkv"))
     result = ScanResult(download_only={1005: ["torrents/seed.mkv"]})
 
-    candidates = classify_download_orphans(result, root, qbit_paths={""})
+    candidates = classify_download_orphans(result, root, qbit_paths={""}, arr_queue_paths=set())
 
     assert candidates == []
 
@@ -100,7 +130,9 @@ def test_sibling_dir_with_shared_name_prefix_is_still_an_orphan(tmp_path):
     _make_file(os.path.join(root, "torrents", "Pack2", "a.mkv"))
     result = ScanResult(download_only={1004: ["torrents/Pack2/a.mkv"]})
 
-    candidates = classify_download_orphans(result, root, qbit_paths={"torrents/Pack"})
+    candidates = classify_download_orphans(
+        result, root, qbit_paths={"torrents/Pack"}, arr_queue_paths=set()
+    )
 
     assert len(candidates) == 1
 
@@ -110,7 +142,7 @@ def test_qbit_unreachable_fails_closed(tmp_path):
     _make_file(os.path.join(root, "torrents", "seed.mkv"))
     result = ScanResult(download_only={333: ["torrents/seed.mkv"]})
 
-    candidates = classify_download_orphans(result, root, qbit_paths=None)
+    candidates = classify_download_orphans(result, root, qbit_paths=None, arr_queue_paths=set())
 
     assert candidates == []
 
@@ -241,7 +273,7 @@ def test_size_bytes_reflects_real_file_size(tmp_path):
     _make_file(os.path.join(root, "torrents", "seed.mkv"), content=b"x" * 12345)
     result = ScanResult(download_only={999: ["torrents/seed.mkv"]})
 
-    candidates = classify_download_orphans(result, root, qbit_paths=set())
+    candidates = classify_download_orphans(result, root, qbit_paths=set(), arr_queue_paths=set())
 
     assert candidates[0].size_bytes == 12345
 

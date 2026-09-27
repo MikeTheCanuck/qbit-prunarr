@@ -46,3 +46,77 @@ def test_sends_api_key_header(client: SonarrClient, httpx_mock: HTTPXMock):
 
     request = httpx_mock.get_requests()[0]
     assert request.headers["x-api-key"] == "key123"
+
+
+def test_get_all_queue_paths_single_page(client: SonarrClient, httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        method="GET",
+        url=f"{BASE_URL}/api/v3/queue?page=1&pageSize=250",
+        json={
+            "page": 1,
+            "pageSize": 250,
+            "totalRecords": 2,
+            "records": [
+                {"id": 1, "outputPath": "/tv/Show/ep1.mkv"},
+                {"id": 2, "outputPath": "/tv/Show/ep2.mkv"},
+            ],
+        },
+    )
+
+    assert client.get_all_queue_paths() == {"/tv/Show/ep1.mkv", "/tv/Show/ep2.mkv"}
+
+
+def test_get_all_queue_paths_skips_records_with_no_output_path(client: SonarrClient, httpx_mock: HTTPXMock):
+    """Still-downloading items have no output path yet - there's no file
+    on disk yet for a download-orphan check to need protecting."""
+    httpx_mock.add_response(
+        method="GET",
+        url=f"{BASE_URL}/api/v3/queue?page=1&pageSize=250",
+        json={
+            "page": 1,
+            "pageSize": 250,
+            "totalRecords": 1,
+            "records": [{"id": 1, "outputPath": None}],
+        },
+    )
+
+    assert client.get_all_queue_paths() == set()
+
+
+def test_get_all_queue_paths_empty_queue(client: SonarrClient, httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        method="GET",
+        url=f"{BASE_URL}/api/v3/queue?page=1&pageSize=250",
+        json={"page": 1, "pageSize": 250, "totalRecords": 0, "records": []},
+    )
+
+    assert client.get_all_queue_paths() == set()
+
+
+def test_get_all_queue_paths_follows_pagination(client: SonarrClient, httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        method="GET",
+        url=f"{BASE_URL}/api/v3/queue?page=1&pageSize=250",
+        json={
+            "page": 1,
+            "pageSize": 250,
+            "totalRecords": 251,
+            "records": [{"id": i, "outputPath": f"/tv/ep{i}.mkv"} for i in range(250)],
+        },
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url=f"{BASE_URL}/api/v3/queue?page=2&pageSize=250",
+        json={
+            "page": 2,
+            "pageSize": 250,
+            "totalRecords": 251,
+            "records": [{"id": 250, "outputPath": "/tv/ep250.mkv"}],
+        },
+    )
+
+    paths = client.get_all_queue_paths()
+
+    assert len(paths) == 251
+    assert "/tv/ep0.mkv" in paths
+    assert "/tv/ep250.mkv" in paths
