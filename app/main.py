@@ -638,7 +638,13 @@ async def delete_orphan_group(root: str = Form(...)):
 
 
 @app.post("/orphans/delete")
-async def bulk_delete_orphans(inodes: list[int] = Form(...)):
+async def bulk_delete_orphans(
+    inodes: list[int] = Form(default=[]),
+    group_roots: list[str] = Form(default=[]),
+):
+    # Resolve groups BEFORE the re-verify scan - run_scan rebuilds
+    # _group_cache, and membership has to be what the user was shown.
+    groups = [_group_cache[r] for r in group_roots if r in _group_cache]
     try:
         fresh_candidates, _ = await asyncio.to_thread(run_scan)
         fresh_by_inode = {c.inode: c for c in fresh_candidates}
@@ -650,7 +656,18 @@ async def bulk_delete_orphans(inodes: list[int] = Form(...)):
 
     data_root = _current_data_root()
     failed = 0
-    for inode in inodes:
+    attempted = 0
+    handled: set[int] = set()
+    for group in groups:
+        _, group_failed, _ = _delete_group(data_root, group, fresh_candidates)
+        failed += group_failed
+        attempted += len(group.members)
+        handled.update(m.inode for m in group.members)
+
+    for inode in dict.fromkeys(inodes):
+        if inode in handled:
+            continue
+        attempted += 1
         candidate = fresh_by_inode.get(inode)
         if candidate is None:
             continue
@@ -660,7 +677,7 @@ async def bulk_delete_orphans(inodes: list[int] = Form(...)):
             failed += 1
 
     if failed:
-        msg = quote(f"{failed} of {len(inodes)} deletes failed — check logs")
+        msg = quote(f"{failed} of {attempted} deletes failed — check logs")
         return RedirectResponse(url=f"/orphans?flash={msg}", status_code=302)
 
     return RedirectResponse(url="/orphans", status_code=302)

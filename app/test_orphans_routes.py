@@ -676,3 +676,58 @@ def test_group_delete_reports_reverify_failure_without_deleting(tmp_path):
 
     assert "Re-verify failed" in response.text
     assert os.path.exists(os.path.join(root, *BLUEBIRD.split("/"), "BDMV", "index.bdmv"))
+
+
+def test_download_form_has_a_bulk_delete_button(tmp_path):
+    with _services():
+        response = TestClient(app).post("/orphans/scan")
+
+    start = response.text.index('id="download-form"')
+    form = response.text[start:response.text.index("</form>", start)]
+    assert 'id="bulk-delete-btn"' in form
+    assert 'type="submit"' in form
+
+
+def test_bulk_delete_accepts_a_group_root(tmp_path):
+    import os
+    root = str(tmp_path)
+    _make_bluebird(root)
+
+    with _services(qbit_paths={OTHER_MOVIE}):
+        client = TestClient(app, follow_redirects=False)
+        client.post("/orphans/scan")
+        response = client.post("/orphans/delete", data={"group_roots": [BLUEBIRD]})
+
+    assert response.status_code == 302
+    assert "flash=" not in response.headers["location"]
+    assert not os.path.exists(os.path.join(root, *BLUEBIRD.split("/")))
+
+
+def test_bulk_delete_with_group_and_its_child_both_checked_deletes_once(tmp_path):
+    """The child's inode is also a group member - deleting it twice would
+    fail the second time and flash a spurious 'deletes failed'."""
+    import os
+    root = str(tmp_path)
+    _make_bluebird(root)
+
+    with _services(qbit_paths={OTHER_MOVIE}):
+        client = TestClient(app, follow_redirects=False)
+        client.post("/orphans/scan")
+        child_inode = main._group_cache[BLUEBIRD].members[0].inode
+        response = client.post(
+            "/orphans/delete",
+            data={"group_roots": [BLUEBIRD], "inodes": [str(child_inode)]},
+        )
+
+    assert response.status_code == 302
+    assert "flash=" not in response.headers["location"]
+    assert not os.path.exists(os.path.join(root, *BLUEBIRD.split("/")))
+
+
+def test_bulk_delete_with_nothing_selected_is_a_no_op_redirect(tmp_path):
+    with _services():
+        client = TestClient(app, follow_redirects=False)
+        client.post("/orphans/scan")
+        response = client.post("/orphans/delete", data={})
+
+    assert response.status_code == 302

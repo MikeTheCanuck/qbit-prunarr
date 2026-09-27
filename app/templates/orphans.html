@@ -84,6 +84,8 @@
   <h2>Unlinked Downloads</h2>
   <p class="section-subtitle">Not referenced by any active torrent — generally safe to reclaim.</p>
   <form method="post" action="/orphans/delete" id="download-form">
+    <p><button type="submit" id="bulk-delete-btn" disabled
+               onclick="return confirm('Delete every selected file and folder?');">Delete selected</button></p>
     <table id="download-table">
       <thead>
         <tr>
@@ -188,6 +190,26 @@
     toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
     toggle.title = expanded ? 'Hide files' : 'Show files';
   });
+
+  // Select-all and the bulk button for Unlinked Downloads. The group
+  // checkbox (name="group_roots") and child checkboxes (name="inodes") are
+  // independent; the server de-duplicates a file selected both ways.
+  function refreshBulkButton() {
+    var btn = document.getElementById('bulk-delete-btn');
+    if (!btn) { return; }
+    btn.disabled = !document.querySelector('#download-table .orphan-cb:checked');
+  }
+
+  document.addEventListener('change', function (e) {
+    if (e.target.id === 'select-all-download') {
+      document.querySelectorAll('#download-table .orphan-cb').forEach(function (cb) {
+        cb.checked = e.target.checked;
+      });
+    }
+    if (e.target.closest('#download-table')) { refreshBulkButton(); }
+  });
+
+  document.addEventListener('htmx:afterSwap', refreshBulkButton);
 
   document.addEventListener('htmx:afterSwap', function () {
     applySort('download-table');
