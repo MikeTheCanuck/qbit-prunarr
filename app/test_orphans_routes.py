@@ -70,8 +70,8 @@ def test_scan_finds_download_orphan(tmp_path):
     _make_file(os.path.join(str(tmp_path), "torrents", "seed.mkv"))
 
     with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
-         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set())), \
-         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set())), \
+         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set(), get_all_queue_paths=set())), \
+         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set(), get_all_queue_paths=set())), \
          patch("main.PlexClient", return_value=_mock_client(
              get_all_movie_paths=set(), get_all_episode_paths=set()
          )):
@@ -90,8 +90,8 @@ def test_scan_result_rows_carry_sort_data_attributes(tmp_path):
     _make_file(os.path.join(str(tmp_path), "torrents", "seed.mkv"), content=b"x" * 5000)
 
     with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
-         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set())), \
-         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set())), \
+         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set(), get_all_queue_paths=set())), \
+         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set(), get_all_queue_paths=set())), \
          patch("main.PlexClient", return_value=_mock_client(
              get_all_movie_paths=set(), get_all_episode_paths=set()
          )):
@@ -114,8 +114,8 @@ def test_download_and_review_candidates_render_in_separate_tables(tmp_path):
     _make_file(os.path.join(root, "media", "movies", "orphan-movie.mkv"))
 
     with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
-         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set())), \
-         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set())), \
+         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set(), get_all_queue_paths=set())), \
+         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set(), get_all_queue_paths=set())), \
          patch("main.PlexClient", return_value=_mock_client(
              get_all_movie_paths=set(), get_all_episode_paths=set()
          )):
@@ -150,6 +150,57 @@ def test_scan_returns_200_with_inline_error_on_unexpected_failure(tmp_path):
     assert "Scan failed" in response.text
 
 
+def test_scan_protects_file_still_in_sonarr_queue_from_download_orphan_flag(tmp_path):
+    """A file stuck 'unable to import automatically' can lose its
+    qBittorrent entry (per the *arr app's own cleanup settings) before
+    Sonarr gives up on it - the queue signal alone has to be able to save
+    it from being flagged as a safe bulk-delete 'unlinked download'."""
+    import os
+    _make_file(os.path.join(str(tmp_path), "torrents", "stuck-import.mkv"))
+
+    with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
+         patch("main.SonarrClient", return_value=_mock_client(
+             get_all_episode_paths=set(), get_all_queue_paths={"torrents/stuck-import.mkv"}
+         )), \
+         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set(), get_all_queue_paths=set())), \
+         patch("main.PlexClient", return_value=_mock_client(
+             get_all_movie_paths=set(), get_all_episode_paths=set()
+         )):
+        client = TestClient(app)
+        response = client.post("/orphans/scan")
+
+    assert response.status_code == 200
+    assert "stuck-import.mkv" not in _swapped_region(response.text)
+
+
+def test_scan_with_sonarr_queue_fetch_failure_fails_closed_for_download_side(tmp_path):
+    """A queue-fetch failure has to disable download-orphan detection the
+    same way an unreachable Sonarr does for media-orphan detection - not
+    silently fall back to only checking qBittorrent."""
+    import os
+    _make_file(os.path.join(str(tmp_path), "torrents", "seed.mkv"))
+
+    broken_sonarr = MagicMock()
+    broken_sonarr.__enter__ = MagicMock(return_value=broken_sonarr)
+    broken_sonarr.__exit__ = MagicMock(return_value=False)
+    broken_sonarr.get_all_episode_paths.return_value = set()
+    broken_sonarr.get_all_queue_paths.side_effect = ConnectionError("refused")
+
+    with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
+         patch("main.SonarrClient", return_value=broken_sonarr), \
+         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set(), get_all_queue_paths=set())), \
+         patch("main.PlexClient", return_value=_mock_client(
+             get_all_movie_paths=set(), get_all_episode_paths=set()
+         )):
+        client = TestClient(app)
+        response = client.post("/orphans/scan")
+
+    region = _swapped_region(response.text)
+    assert "seed.mkv" not in region
+    assert "Sonarr" in region
+    assert "unreachable" in region.lower()
+
+
 def test_scan_with_unreachable_apis_flags_nothing(tmp_path):
     import os
     _make_file(os.path.join(str(tmp_path), "media", "movies", "movie.mkv"))
@@ -177,8 +228,8 @@ def test_service_with_zero_scan_overlap_is_treated_as_unusable(tmp_path):
 
     with patch("main.QBitClient", return_value=_mock_client(
              get_all_content_paths={"/wrong/mount/completed/seed.mkv"})), \
-         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set())), \
-         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set())), \
+         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set(), get_all_queue_paths=set())), \
+         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set(), get_all_queue_paths=set())), \
          patch("main.PlexClient", return_value=_mock_client(
              get_all_movie_paths=set(), get_all_episode_paths=set()
          )):
@@ -198,8 +249,8 @@ def test_genuinely_empty_service_is_not_treated_as_unusable(tmp_path):
     _make_file(os.path.join(str(tmp_path), "media", "movies", "movie.mkv"))
 
     with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
-         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set())), \
-         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set())), \
+         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set(), get_all_queue_paths=set())), \
+         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set(), get_all_queue_paths=set())), \
          patch("main.PlexClient", return_value=_mock_client(
              get_all_movie_paths=set(), get_all_episode_paths=set()
          )):
@@ -221,8 +272,8 @@ def test_multifile_torrent_does_not_make_qbit_look_unusable(tmp_path):
 
     with patch("main.QBitClient", return_value=_mock_client(
              get_all_content_paths={"/data/torrents/completed/Show.S01-GRP"})), \
-         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set())), \
-         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set())), \
+         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set(), get_all_queue_paths=set())), \
+         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set(), get_all_queue_paths=set())), \
          patch("main.PlexClient", return_value=_mock_client(
              get_all_movie_paths=set(), get_all_episode_paths=set()
          )):
@@ -255,8 +306,8 @@ def test_qbit_status_ignores_usenet_only_orphans(tmp_path):
 
     with patch("main.QBitClient", return_value=_mock_client(
              get_all_content_paths={"torrents/Movie.release.mkv"})), \
-         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set())), \
-         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set())), \
+         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set(), get_all_queue_paths=set())), \
+         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set(), get_all_queue_paths=set())), \
          patch("main.PlexClient", return_value=_mock_client(
              get_all_movie_paths=set(), get_all_episode_paths=set()
          )):
@@ -276,7 +327,7 @@ def test_scan_reports_unreachable_service_inside_swapped_region(tmp_path):
 
     with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
          patch("main.SonarrClient", side_effect=ConnectionError("refused")), \
-         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set())), \
+         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set(), get_all_queue_paths=set())), \
          patch("main.PlexClient", return_value=_mock_client(
              get_all_movie_paths=set(), get_all_episode_paths=set()
          )):
@@ -290,8 +341,8 @@ def test_scan_reports_unreachable_service_inside_swapped_region(tmp_path):
 
 def test_scan_reports_every_service_as_ok_when_all_respond(tmp_path):
     with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
-         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set())), \
-         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set())), \
+         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set(), get_all_queue_paths=set())), \
+         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set(), get_all_queue_paths=set())), \
          patch("main.PlexClient", return_value=_mock_client(
              get_all_movie_paths=set(), get_all_episode_paths=set()
          )):
@@ -320,8 +371,8 @@ def test_delete_single_orphan_after_reverify(tmp_path):
     _make_file(path)
 
     with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
-         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set())), \
-         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set())), \
+         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set(), get_all_queue_paths=set())), \
+         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set(), get_all_queue_paths=set())), \
          patch("main.PlexClient", return_value=_mock_client(
              get_all_movie_paths=set(), get_all_episode_paths=set()
          )):
@@ -346,8 +397,8 @@ def test_delete_single_orphan_removes_all_hardlink_paths(tmp_path):
     os.link(original, duplicate)
 
     with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
-         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set())), \
-         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set())), \
+         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set(), get_all_queue_paths=set())), \
+         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set(), get_all_queue_paths=set())), \
          patch("main.PlexClient", return_value=_mock_client(
              get_all_movie_paths=set(), get_all_episode_paths=set()
          )):
@@ -367,8 +418,8 @@ def test_delete_skips_if_no_longer_orphan(tmp_path):
     _make_file(path)
 
     with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
-         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set())), \
-         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set())), \
+         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set(), get_all_queue_paths=set())), \
+         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set(), get_all_queue_paths=set())), \
          patch("main.PlexClient", return_value=_mock_client(
              get_all_movie_paths=set(), get_all_episode_paths=set()
          )):
@@ -395,8 +446,8 @@ def test_bulk_delete_orphans(tmp_path):
     _make_file(path_b)
 
     with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
-         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set())), \
-         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set())), \
+         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set(), get_all_queue_paths=set())), \
+         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set(), get_all_queue_paths=set())), \
          patch("main.PlexClient", return_value=_mock_client(
              get_all_movie_paths=set(), get_all_episode_paths=set()
          )):
@@ -420,8 +471,8 @@ def test_bulk_delete_reports_failures_via_flash_instead_of_silently_dropping_the
     _make_file(path_a)
 
     with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
-         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set())), \
-         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set())), \
+         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set(), get_all_queue_paths=set())), \
+         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set(), get_all_queue_paths=set())), \
          patch("main.PlexClient", return_value=_mock_client(
              get_all_movie_paths=set(), get_all_episode_paths=set()
          )):

@@ -199,14 +199,18 @@ def _fetch_qbit_paths() -> set[str]:
         return client.get_all_content_paths()
 
 
-def _fetch_sonarr_paths() -> set[str]:
+def _fetch_sonarr_paths() -> tuple[set[str], set[str]]:
+    """Episode paths (for media-orphan classification) and queue output
+    paths (for download-orphan classification), from one Sonarr session —
+    a queue-fetch failure should mark Sonarr as a whole unreachable rather
+    than silently disabling only the queue signal."""
     with SonarrClient(os.environ["SONARR_URL"], os.environ["SONARR_API_KEY"]) as client:
-        return client.get_all_episode_paths()
+        return client.get_all_episode_paths(), client.get_all_queue_paths()
 
 
-def _fetch_radarr_paths() -> set[str]:
+def _fetch_radarr_paths() -> tuple[set[str], set[str]]:
     with RadarrClient(os.environ["RADARR_URL"], os.environ["RADARR_API_KEY"]) as client:
-        return client.get_all_movie_paths()
+        return client.get_all_movie_paths(), client.get_all_queue_paths()
 
 
 def _fetch_plex_movie_paths() -> set[str]:
@@ -279,12 +283,24 @@ def run_scan() -> tuple[list[OrphanCandidate], dict[str, str]]:
 
     sonarr_prefix = os.environ.get("SONARR_PATH_PREFIX", "")
     raw_sonarr = _safe(_fetch_sonarr_paths)
-    sonarr_paths = {to_relative(p, sonarr_prefix) for p in raw_sonarr} if raw_sonarr is not None else None
+    if raw_sonarr is None:
+        sonarr_paths = None
+        sonarr_queue_paths = None
+    else:
+        raw_sonarr_episodes, raw_sonarr_queue = raw_sonarr
+        sonarr_paths = {to_relative(p, sonarr_prefix) for p in raw_sonarr_episodes}
+        sonarr_queue_paths = {to_relative(p, sonarr_prefix) for p in raw_sonarr_queue}
     sonarr_status = _service_status(sonarr_paths, tv_scanned)
 
     radarr_prefix = os.environ.get("RADARR_PATH_PREFIX", "")
     raw_radarr = _safe(_fetch_radarr_paths)
-    radarr_paths = {to_relative(p, radarr_prefix) for p in raw_radarr} if raw_radarr is not None else None
+    if raw_radarr is None:
+        radarr_paths = None
+        radarr_queue_paths = None
+    else:
+        raw_radarr_movies, raw_radarr_queue = raw_radarr
+        radarr_paths = {to_relative(p, radarr_prefix) for p in raw_radarr_movies}
+        radarr_queue_paths = {to_relative(p, radarr_prefix) for p in raw_radarr_queue}
     radarr_status = _service_status(radarr_paths, movie_scanned)
 
     plex_prefix = os.environ.get("PLEX_PATH_PREFIX", "")
@@ -312,14 +328,21 @@ def run_scan() -> tuple[list[OrphanCandidate], dict[str, str]]:
         qbit_paths = None
     if sonarr_status == "unusable":
         sonarr_paths = None
+        sonarr_queue_paths = None
     if radarr_status == "unusable":
         radarr_paths = None
+        radarr_queue_paths = None
     if plex_movie_status == "unusable":
         plex_movie_paths = None
     if plex_episode_status == "unusable":
         plex_episode_paths = None
 
-    candidates = classify_download_orphans(result, data_root, qbit_paths)
+    arr_queue_paths = (
+        None if sonarr_queue_paths is None or radarr_queue_paths is None
+        else sonarr_queue_paths | radarr_queue_paths
+    )
+
+    candidates = classify_download_orphans(result, data_root, qbit_paths, arr_queue_paths)
     candidates += classify_media_orphans(
         result, data_root, TV_SUBDIRS, sonarr_paths, radarr_paths, plex_episode_paths, plex_movie_paths
     )
