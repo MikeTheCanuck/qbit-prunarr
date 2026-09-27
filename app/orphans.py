@@ -219,3 +219,39 @@ def delete_orphan(data_root: str, relative_path: str, boundary: str) -> None:
         except OSError:
             break
         parent = os.path.dirname(parent)
+
+
+def prune_empty_tree(data_root: str, root_rel: str, boundary: str) -> None:
+    """Remove every empty directory at or under `root_rel`, then prune
+    now-empty parents up to (never including) `boundary`.
+
+    Group delete needs this on top of delete_orphan's own per-file
+    pruning: that only climbs from each deleted file's parent, so a
+    directory that never held a file (disc rips ship empty AUXDATA/,
+    BDJO/, META/) is never visited and keeps the group root alive as an
+    empty shell. rmdir only ever succeeds on an empty directory, so a
+    file that failed to delete keeps its whole ancestor chain in place.
+    """
+    boundary_rel = boundary.strip("/")
+    root_rel = root_rel.strip("/")
+    if not boundary_rel or not root_rel.startswith(boundary_rel + "/"):
+        raise ValueError(
+            f"refusing to prune {root_rel!r}: not strictly under boundary {boundary!r}"
+        )
+
+    root_abs = os.path.abspath(os.path.join(data_root, root_rel))
+    boundary_abs = os.path.abspath(os.path.join(data_root, boundary_rel))
+
+    for dirpath, _dirnames, _filenames in os.walk(root_abs, topdown=False):
+        try:
+            os.rmdir(dirpath)
+        except OSError:
+            pass
+
+    parent = os.path.dirname(root_abs)
+    while parent != boundary_abs and parent.startswith(boundary_abs + os.sep):
+        try:
+            os.rmdir(parent)
+        except OSError:
+            break
+        parent = os.path.dirname(parent)

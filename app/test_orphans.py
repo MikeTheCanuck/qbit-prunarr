@@ -11,6 +11,7 @@ from orphans import (
     delete_orphan,
     is_tv_path,
     path_tracked,
+    prune_empty_tree,
 )
 
 
@@ -382,3 +383,71 @@ def test_delete_orphan_refuses_path_outside_its_boundary(tmp_path):
         delete_orphan(root, "media/movies/movie.mkv", "torrents")
 
     assert os.path.exists(path)
+
+
+# --- prune_empty_tree ------------------------------------------------
+
+def test_prune_empty_tree_removes_never_populated_subdirs(tmp_path):
+    """Disc rips ship empty AUXDATA/BDJO/META dirs that per-file pruning
+    never visits - the group root would otherwise survive as a shell."""
+    root = str(tmp_path)
+    os.makedirs(os.path.join(root, "torrents", "radarr", "BLUEBIRD", "BDMV", "AUXDATA"))
+    os.makedirs(os.path.join(root, "torrents", "radarr", "BLUEBIRD", "BDMV", "META", "DL"))
+    _make_file(os.path.join(root, "torrents", "radarr", "Other", "keep.mkv"))
+
+    prune_empty_tree(root, "torrents/radarr/BLUEBIRD", "torrents")
+
+    assert not os.path.exists(os.path.join(root, "torrents", "radarr", "BLUEBIRD"))
+    assert os.path.isdir(os.path.join(root, "torrents", "radarr"))
+
+
+def test_prune_empty_tree_climbs_to_but_not_past_boundary(tmp_path):
+    root = str(tmp_path)
+    os.makedirs(os.path.join(root, "torrents", "radarr", "BLUEBIRD", "BDMV"))
+
+    prune_empty_tree(root, "torrents/radarr/BLUEBIRD", "torrents")
+
+    assert not os.path.exists(os.path.join(root, "torrents", "radarr"))
+    assert os.path.isdir(os.path.join(root, "torrents"))
+
+
+def test_prune_empty_tree_leaves_files_and_their_dirs(tmp_path):
+    root = str(tmp_path)
+    survivor = os.path.join(root, "torrents", "A", "sub", "failed-delete.clpi")
+    _make_file(survivor)
+    os.makedirs(os.path.join(root, "torrents", "A", "empty"))
+
+    prune_empty_tree(root, "torrents/A", "torrents")
+
+    assert os.path.exists(survivor)
+    assert not os.path.exists(os.path.join(root, "torrents", "A", "empty"))
+
+
+def test_prune_empty_tree_tolerates_already_removed_root(tmp_path):
+    root = str(tmp_path)
+    os.makedirs(os.path.join(root, "torrents", "radarr"))
+
+    prune_empty_tree(root, "torrents/radarr/GONE", "torrents")
+
+    assert not os.path.exists(os.path.join(root, "torrents", "radarr"))
+    assert os.path.isdir(os.path.join(root, "torrents"))
+
+
+def test_prune_empty_tree_refuses_the_boundary_itself(tmp_path):
+    root = str(tmp_path)
+    os.makedirs(os.path.join(root, "torrents", "empty"))
+
+    with pytest.raises(ValueError):
+        prune_empty_tree(root, "torrents", "torrents")
+
+    assert os.path.isdir(os.path.join(root, "torrents", "empty"))
+
+
+def test_prune_empty_tree_refuses_root_outside_boundary(tmp_path):
+    root = str(tmp_path)
+    os.makedirs(os.path.join(root, "media", "movies", "empty"))
+
+    with pytest.raises(ValueError):
+        prune_empty_tree(root, "media/movies/empty", "torrents")
+
+    assert os.path.isdir(os.path.join(root, "media", "movies", "empty"))
