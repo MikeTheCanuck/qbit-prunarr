@@ -486,3 +486,426 @@ def test_bulk_delete_reports_failures_via_flash_instead_of_silently_dropping_the
     assert response.status_code == 302
     assert "flash=" in response.headers["location"]
     assert os.path.exists(path_a)
+
+
+# --- orphan grouping -------------------------------------------------
+
+from contextlib import contextmanager
+
+
+@contextmanager
+def _services(qbit_paths=()):
+    with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set(qbit_paths))), \
+         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set(), get_all_queue_paths=set())), \
+         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set(), get_all_queue_paths=set())), \
+         patch("main.PlexClient", return_value=_mock_client(
+             get_all_movie_paths=set(), get_all_episode_paths=set()
+         )):
+        yield
+
+
+BLUEBIRD = "torrents/completed/radarr/BLUEBIRD"
+OTHER_MOVIE = "torrents/completed/radarr/Other.Movie"
+
+
+def _make_bluebird(root):
+    """The spec's motivating shape: a fully orphaned multi-level disc rip
+    (with an empty, never-populated subdir) next to a torrent qBit still
+    tracks."""
+    import os
+    base = os.path.join(root, *BLUEBIRD.split("/"))
+    _make_file(os.path.join(base, "BDMV", "STREAM", "00000.m2ts"), content=b"x" * 5000)
+    _make_file(os.path.join(base, "BDMV", "BACKUP", "CLIPINF", "00153.clpi"), content=b"x" * 10)
+    _make_file(os.path.join(base, "BDMV", "index.bdmv"), content=b"x" * 20)
+    os.makedirs(os.path.join(base, "BDMV", "AUXDATA"))
+    _make_file(os.path.join(root, *OTHER_MOVIE.split("/"), "movie.mkv"), content=b"x" * 300)
+
+
+def test_fully_orphaned_directory_renders_as_one_collapsed_group(tmp_path):
+    _make_bluebird(str(tmp_path))
+
+    with _services(qbit_paths={OTHER_MOVIE}):
+        response = TestClient(app).post("/orphans/scan")
+
+    region = _table_region(response.text, "download-table")
+    assert f'data-path="{BLUEBIRD}"' in region
+    assert 'data-size-bytes="5030"' in region
+    assert '<span class="group-count">3 files</span>' in region
+    # Verify the count is inside the button
+    assert 'class="group-toggle"' in region and '<span class="group-count">3 files</span>' in region
+    assert 'class="orphan-unit orphan-group"' in region  # collapsed: no "expanded"
+    assert region.count('class="group-child"') == 3
+    assert main._group_cache[BLUEBIRD].size_bytes == 5030
+
+
+def test_group_children_show_paths_relative_to_group_root(tmp_path):
+    _make_bluebird(str(tmp_path))
+
+    with _services(qbit_paths={OTHER_MOVIE}):
+        response = TestClient(app).post("/orphans/scan")
+
+    region = _table_region(response.text, "download-table")
+    assert "BDMV/BACKUP/CLIPINF/00153.clpi" in region
+    assert f"{BLUEBIRD}/BDMV/BACKUP/CLIPINF/00153.clpi" not in region
+
+
+def test_group_does_not_swallow_a_still_tracked_sibling(tmp_path):
+    _make_bluebird(str(tmp_path))
+
+    with _services(qbit_paths={OTHER_MOVIE}):
+        response = TestClient(app).post("/orphans/scan")
+
+    assert "Other.Movie" not in _table_region(response.text, "download-table")
+
+
+def test_standalone_orphans_still_render_as_ordinary_units(tmp_path):
+    import os
+    _make_file(os.path.join(str(tmp_path), "torrents", "seed.mkv"), content=b"x" * 5000)
+
+    with _services():
+        response = TestClient(app).post("/orphans/scan")
+
+    region = _table_region(response.text, "download-table")
+    assert '<tbody class="orphan-unit" data-path="torrents/seed.mkv" data-size-bytes="5000">' in region
+    assert "orphan-group" not in region
+    assert main._group_cache == {}
+
+
+def test_needs_review_rows_are_never_grouped(tmp_path):
+    import os
+    root = str(tmp_path)
+    _make_file(os.path.join(root, "media", "movies", "Film (2020)", "a.mkv"))
+    _make_file(os.path.join(root, "media", "movies", "Film (2020)", "b.mkv"))
+
+    with _services():
+        response = TestClient(app).post("/orphans/scan")
+
+    region = _table_region(response.text, "review-table")
+    assert "a.mkv" in region and "b.mkv" in region
+    assert "orphan-group" not in region
+
+
+def test_group_delete_removes_every_file_and_the_emptied_tree(tmp_path):
+    import os
+    root = str(tmp_path)
+    _make_bluebird(root)
+
+    with _services(qbit_paths={OTHER_MOVIE}):
+        client = TestClient(app)
+        client.post("/orphans/scan")
+        response = client.post("/orphans/groups/delete", data={"root": BLUEBIRD})
+
+    assert response.status_code == 200
+    assert response.text == ""
+    assert not os.path.exists(os.path.join(root, *BLUEBIRD.split("/")))  # incl. empty AUXDATA/
+    assert os.path.exists(os.path.join(root, *OTHER_MOVIE.split("/"), "movie.mkv"))
+
+
+def test_group_delete_is_best_effort_and_survivors_come_back_standalone(tmp_path):
+    import os
+    root = str(tmp_path)
+    _make_bluebird(root)
+    clpi = os.path.join(root, *BLUEBIRD.split("/"), "BDMV", "BACKUP", "CLIPINF", "00153.clpi")
+    real_delete = main.delete_orphan
+
+    def flaky_delete(data_root, relative_path, boundary):
+        if relative_path.endswith("00153.clpi"):
+            raise OSError("permission denied")
+        return real_delete(data_root, relative_path, boundary)
+
+    with _services(qbit_paths={OTHER_MOVIE}):
+        client = TestClient(app)
+        client.post("/orphans/scan")
+        with patch("main.delete_orphan", side_effect=flaky_delete):
+            response = client.post("/orphans/groups/delete", data={"root": BLUEBIRD})
+        rescan = client.post("/orphans/scan")
+
+    assert "1 of 3 deletes failed" in response.text
+    assert f'id="{main._group_dom_id(BLUEBIRD)}"' in response.text
+    assert os.path.exists(clpi)
+    assert not os.path.exists(os.path.join(root, *BLUEBIRD.split("/"), "BDMV", "STREAM"))
+
+    region = _table_region(rescan.text, "download-table")
+    assert f"{BLUEBIRD}/BDMV/BACKUP/CLIPINF/00153.clpi" in region  # full path, standalone
+    assert "orphan-group" not in region
+
+
+def test_group_delete_skips_members_that_are_no_longer_orphans(tmp_path):
+    import os
+    root = str(tmp_path)
+    _make_bluebird(root)
+
+    with _services(qbit_paths={OTHER_MOVIE}):
+        client = TestClient(app)
+        client.post("/orphans/scan")
+    # Between scan and click, the torrent was re-added in qBittorrent.
+    with _services(qbit_paths={OTHER_MOVIE, BLUEBIRD}):
+        response = client.post("/orphans/groups/delete", data={"root": BLUEBIRD})
+
+    assert response.status_code == 200
+    assert "no longer" in response.text.lower()
+    assert os.path.exists(os.path.join(root, *BLUEBIRD.split("/"), "BDMV", "STREAM", "00000.m2ts"))
+    # A live torrent's empty subdirs are left alone too.
+    assert os.path.isdir(os.path.join(root, *BLUEBIRD.split("/"), "BDMV", "AUXDATA"))
+
+
+def test_group_delete_with_unknown_root_deletes_nothing(tmp_path):
+    """An unknown root (stale page, or a hand-crafted path) must not return
+    an empty 200 - HTMX would swap that in as if the delete had succeeded,
+    silently removing the row from the page while the files stay put."""
+    import os
+    root = str(tmp_path)
+    _make_bluebird(root)
+
+    with _services(qbit_paths={OTHER_MOVIE}):
+        client = TestClient(app)
+        client.post("/orphans/scan")
+        stale = client.post("/orphans/groups/delete", data={"root": "torrents/completed/radarr"})
+        forged = client.post("/orphans/groups/delete", data={"root": "../../etc"})
+
+    assert stale.status_code == 200
+    assert "changed since this scan" in stale.text
+    assert forged.status_code == 200
+    assert "changed since this scan" in forged.text
+    assert os.path.exists(os.path.join(root, *BLUEBIRD.split("/"), "BDMV", "STREAM", "00000.m2ts"))
+
+
+def test_bulk_delete_with_unknown_group_root_flashes_and_deletes_nothing_in_that_group(tmp_path):
+    """Every single delete re-scans and rebuilds `_group_cache`; a group
+    root posted by a stale page (or already deleted by another request)
+    is no longer a key in that cache. Silently skipping it would let the
+    bulk redirect look like a clean success with no indication that group
+    was never touched."""
+    import os
+    root = str(tmp_path)
+    _make_bluebird(root)
+
+    with _services(qbit_paths={OTHER_MOVIE}):
+        client = TestClient(app, follow_redirects=False)
+        client.post("/orphans/scan")
+        response = client.post(
+            "/orphans/delete",
+            data={"group_roots": ["torrents/completed/radarr/does-not-exist"]},
+        )
+
+    from urllib.parse import unquote
+
+    assert response.status_code == 302
+    assert "flash=" in response.headers["location"]
+    assert "changed since this scan" in unquote(response.headers["location"])
+    assert os.path.exists(os.path.join(root, *BLUEBIRD.split("/"), "BDMV", "STREAM", "00000.m2ts"))
+
+
+def test_group_delete_reports_reverify_failure_without_deleting(tmp_path):
+    import os
+    root = str(tmp_path)
+    _make_bluebird(root)
+
+    with _services(qbit_paths={OTHER_MOVIE}):
+        client = TestClient(app)
+        client.post("/orphans/scan")
+        with patch("main.run_scan", side_effect=RuntimeError("disk fell off")):
+            response = client.post("/orphans/groups/delete", data={"root": BLUEBIRD})
+
+    assert "Re-verify failed" in response.text
+    assert os.path.exists(os.path.join(root, *BLUEBIRD.split("/"), "BDMV", "index.bdmv"))
+
+
+def test_download_form_has_a_bulk_delete_button(tmp_path):
+    with _services():
+        response = TestClient(app).post("/orphans/scan")
+
+    start = response.text.index('id="download-form"')
+    form = response.text[start:response.text.index("</form>", start)]
+    assert 'id="bulk-delete-btn"' in form
+    assert 'type="submit"' in form
+
+
+def test_bulk_delete_accepts_a_group_root(tmp_path):
+    import os
+    root = str(tmp_path)
+    _make_bluebird(root)
+
+    with _services(qbit_paths={OTHER_MOVIE}):
+        client = TestClient(app, follow_redirects=False)
+        client.post("/orphans/scan")
+        response = client.post("/orphans/delete", data={"group_roots": [BLUEBIRD]})
+
+    assert response.status_code == 302
+    assert "flash=" not in response.headers["location"]
+    assert not os.path.exists(os.path.join(root, *BLUEBIRD.split("/")))
+
+
+def test_bulk_delete_with_group_and_its_child_both_checked_deletes_once(tmp_path):
+    """The child's inode is also a group member - deleting it twice would
+    fail the second time and flash a spurious 'deletes failed'."""
+    import os
+    root = str(tmp_path)
+    _make_bluebird(root)
+
+    with _services(qbit_paths={OTHER_MOVIE}):
+        client = TestClient(app, follow_redirects=False)
+        client.post("/orphans/scan")
+        child_inode = main._group_cache[BLUEBIRD].members[0].inode
+        response = client.post(
+            "/orphans/delete",
+            data={"group_roots": [BLUEBIRD], "inodes": [str(child_inode)]},
+        )
+
+    assert response.status_code == 302
+    assert "flash=" not in response.headers["location"]
+    assert not os.path.exists(os.path.join(root, *BLUEBIRD.split("/")))
+
+
+def test_bulk_delete_with_nothing_selected_is_a_no_op_redirect(tmp_path):
+    with _services():
+        client = TestClient(app, follow_redirects=False)
+        client.post("/orphans/scan")
+        response = client.post("/orphans/delete", data={})
+
+    assert response.status_code == 302
+
+
+def test_bulk_delete_dedupes_duplicate_group_roots(tmp_path):
+    """The same group root posted twice (e.g. a double-submitted form)
+    must not run `_delete_group` on it twice - the second pass would find
+    every member already gone and flash a spurious 'deletes failed'."""
+    import os
+    root = str(tmp_path)
+    _make_bluebird(root)
+
+    with _services(qbit_paths={OTHER_MOVIE}):
+        client = TestClient(app, follow_redirects=False)
+        client.post("/orphans/scan")
+        response = client.post(
+            "/orphans/delete",
+            data={"group_roots": [BLUEBIRD, BLUEBIRD]},
+        )
+
+    assert response.status_code == 302
+    assert "flash=" not in response.headers["location"]
+    assert not os.path.exists(os.path.join(root, *BLUEBIRD.split("/")))
+
+
+def test_group_delete_skips_member_with_hardlink_escaping_the_group_root(tmp_path):
+    """A member's file gains a second name outside the group root between
+    scan and delete-click (a duplicate copy dropped elsewhere under a
+    download root). Deleting "this folder" can't touch it: unlinking only
+    the in-root name would still leave the file's data referenced by the
+    escaped name, silently keeping a copy alive under a different path
+    than the one the user was shown, so that member has to be skipped -
+    not deleted at all - and the skip also cancels the empty-tree prune."""
+    import os
+    root = str(tmp_path)
+    _make_bluebird(root)
+
+    with _services(qbit_paths={OTHER_MOVIE}):
+        client = TestClient(app)
+        client.post("/orphans/scan")
+
+        clpi_in_root = os.path.join(
+            root, *BLUEBIRD.split("/"), "BDMV", "BACKUP", "CLIPINF", "00153.clpi"
+        )
+        escaped = os.path.join(root, "torrents", "completed", "radarr", "escaped.clpi")
+        os.link(clpi_in_root, escaped)
+
+        response = client.post("/orphans/groups/delete", data={"root": BLUEBIRD})
+
+    assert response.status_code == 200
+    assert "skipped" in response.text.lower()
+    assert os.path.exists(clpi_in_root)
+    assert os.path.exists(escaped)
+    # The other two members deleted normally, but the skip cancels pruning
+    # of the group root's (now not-fully-emptied) directory tree.
+    assert not os.path.exists(
+        os.path.join(root, *BLUEBIRD.split("/"), "BDMV", "STREAM", "00000.m2ts")
+    )
+    assert os.path.isdir(os.path.join(root, *BLUEBIRD.split("/")))
+
+
+# --- logging on delete failure (Fix F3) -------------------------------
+
+import logging
+
+
+def test_bulk_delete_per_inode_failure_is_logged(tmp_path, caplog):
+    import os
+    path_a = os.path.join(str(tmp_path), "torrents", "a.mkv")
+    _make_file(path_a)
+
+    with _services():
+        client = TestClient(app, follow_redirects=False)
+        client.post("/orphans/scan")
+        inodes = list(main._scan_cache.keys())
+        with patch("main.delete_orphan", side_effect=OSError("boom")):
+            with caplog.at_level(logging.WARNING, logger="qbit-prunarr"):
+                client.post("/orphans/delete", data={"inodes": [str(i) for i in inodes]})
+
+    assert "boom" in caplog.text
+    assert str(inodes[0]) in caplog.text
+
+
+def test_group_delete_member_failure_is_logged(tmp_path, caplog):
+    import os
+    root = str(tmp_path)
+    _make_bluebird(root)
+    real_delete = main.delete_orphan
+
+    def flaky_delete(data_root, relative_path, boundary):
+        if relative_path.endswith("00153.clpi"):
+            raise OSError("permission denied")
+        return real_delete(data_root, relative_path, boundary)
+
+    with _services(qbit_paths={OTHER_MOVIE}):
+        client = TestClient(app)
+        client.post("/orphans/scan")
+        with patch("main.delete_orphan", side_effect=flaky_delete):
+            with caplog.at_level(logging.WARNING, logger="qbit-prunarr"):
+                client.post("/orphans/groups/delete", data={"root": BLUEBIRD})
+
+    assert "permission denied" in caplog.text
+
+
+def test_standalone_mac_junk_files_are_hidden_from_download_table(tmp_path):
+    """.DS_Store and ._* AppleDouble sidecars are Finder noise, not
+    meaningful orphans - torrents/incoming is a direct child of the
+    torrents/ boundary, so nothing here groups and each junk file would
+    otherwise render as its own pointless standalone row."""
+    import os
+    root = str(tmp_path)
+    _make_file(os.path.join(root, "torrents", "incoming", "real.mkv"), content=b"x" * 5000)
+    _make_file(os.path.join(root, "torrents", "incoming", ".DS_Store"), content=b"x" * 10)
+    _make_file(os.path.join(root, "torrents", "incoming", "._foo.mkv"), content=b"x" * 10)
+
+    with _services():
+        response = TestClient(app).post("/orphans/scan")
+
+    region = _table_region(response.text, "download-table")
+    assert "real.mkv" in region
+    assert ".DS_Store" not in region
+    assert "._foo.mkv" not in region
+
+
+def test_group_child_rows_still_include_mac_junk_files(tmp_path):
+    """A .DS_Store inside a fully-orphaned group folder is still real
+    group content: it's counted in the file count and shown when the
+    group is expanded, because a group delete has to remove it too or
+    the folder would survive as a shell containing only .DS_Store."""
+    import os
+    root = str(tmp_path)
+    _make_bluebird(root)
+    _make_file(os.path.join(root, *BLUEBIRD.split("/"), "BDMV", ".DS_Store"), content=b"x" * 10)
+
+    with _services(qbit_paths={OTHER_MOVIE}):
+        response = TestClient(app).post("/orphans/scan")
+
+    region = _table_region(response.text, "download-table")
+    assert ".DS_Store" in region
+    assert '<span class="group-count">4 files</span>' in region
+
+
+def test_is_mac_junk_helper():
+    assert main._is_mac_junk(["torrents/incoming/.DS_Store"])
+    assert main._is_mac_junk(["torrents/incoming/._foo.mkv"])
+    assert not main._is_mac_junk(["torrents/incoming/x.DS_Store"])
+    assert not main._is_mac_junk(["torrents/incoming/._foo.mkv", "torrents/incoming/real.mkv"])

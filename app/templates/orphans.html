@@ -38,6 +38,15 @@
     #bulk-delete-btn:disabled { background: #4a4d54; color: var(--text-muted); cursor: default; }
     button[hx-delete] { padding: 4px 10px; background: var(--danger); color: white; border: none; border-radius: 4px; cursor: pointer; }
     button[hx-delete]:hover { background: var(--danger-hover); }
+    button.group-delete { padding: 4px 10px; background: var(--danger); color: white; border: none; border-radius: 4px; cursor: pointer; }
+    button.group-delete:hover { background: var(--danger-hover); }
+    .group-toggle { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 1em; min-width: 7.5em; text-align: left; white-space: nowrap; padding: 0 8px 0 0; }
+    .group-chevron { display: inline-block; font-size: 1.4em; line-height: 1; vertical-align: middle; transition: transform 0.15s; }
+    .orphan-group.expanded .group-chevron { transform: rotate(90deg); }
+    .group-count { color: var(--accent); font-size: 0.95em; }
+    .group-toggle:hover .group-count { text-decoration: underline; }
+    .orphan-group:not(.expanded) tr.group-child { display: none; }
+    tr.group-child td:nth-child(2) { padding-left: 36px; color: var(--text-muted); }
     th.sortable { cursor: pointer; user-select: none; }
     th.sortable::after { content: ''; margin-left: 4px; color: var(--accent); }
     th.sort-asc::after { content: '\2191'; }
@@ -77,6 +86,8 @@
   <h2>Unlinked Downloads</h2>
   <p class="section-subtitle">Not referenced by any active torrent — generally safe to reclaim.</p>
   <form method="post" action="/orphans/delete" id="download-form">
+    <p><button type="submit" id="bulk-delete-btn" disabled
+               onclick="return confirm('Delete every selected file and folder?');">Delete selected</button></p>
     <table id="download-table">
       <thead>
         <tr>
@@ -86,11 +97,16 @@
           <th>Delete</th>
         </tr>
       </thead>
-      <tbody>
-        {% for c in download_candidates %}
-          {% include "_orphan_row.html" %}
-        {% endfor %}
-      </tbody>
+      {% for u in download_units %}
+        {% if u.kind == "group" %}
+          {% set g = u %}{% include "_orphan_group.html" %}
+        {% else %}
+          {% set c = u %}
+          <tbody class="orphan-unit" data-path="{{ c.display_path }}" data-size-bytes="{{ c.size_bytes }}">
+            {% include "_orphan_row.html" %}
+          </tbody>
+        {% endif %}
+      {% endfor %}
     </table>
   </form>
 
@@ -107,11 +123,11 @@
             <th>Delete</th>
           </tr>
         </thead>
-        <tbody>
-          {% for c in review_candidates %}
+        {% for c in review_candidates %}
+          <tbody class="orphan-unit" data-path="{{ c.display_path }}" data-size-bytes="{{ c.size_bytes }}">
             {% include "_orphan_row.html" %}
-          {% endfor %}
-        </tbody>
+          </tbody>
+        {% endfor %}
       </table>
     </form>
   </div>
@@ -119,33 +135,34 @@
 
 <script>
   // Default sort: size descending, so the real space-hogs surface above
-  // the sea of near-zero metadata-file rows a single orphaned torrent can
-  // fragment into. Tables can be large (thousands of rows on a real
-  // library) so this sorts in place rather than re-rendering via the
-  // server. Download and Review tables sort independently of each other.
+  // the sea of near-zero metadata-file rows. Each table "unit" (a single
+  // orphan, or a whole group with its hidden child rows) is its own
+  // <tbody>, and units are what get sorted - sorting bare <tr>s would
+  // scatter a group's children away from its header row. Download and
+  // Review tables sort independently of each other.
   var sortStates = {
     'download-table': { column: 'size', dir: 'desc' },
     'review-table': { column: 'size', dir: 'desc' }
   };
 
-  function cellValue(row, column) {
-    if (column === 'size') { return parseInt(row.dataset.sizeBytes, 10) || 0; }
-    return row.dataset.path || '';
+  function cellValue(unit, column) {
+    if (column === 'size') { return parseInt(unit.dataset.sizeBytes, 10) || 0; }
+    return unit.dataset.path || '';
   }
 
   function applySort(tableId) {
     var state = sortStates[tableId];
-    var tbody = document.querySelector('#' + tableId + ' tbody');
-    if (!tbody) { return; }
-    var rows = Array.prototype.slice.call(tbody.querySelectorAll('tr'));
-    rows.sort(function (a, b) {
+    var table = document.getElementById(tableId);
+    if (!table) { return; }
+    var units = Array.prototype.slice.call(table.querySelectorAll(':scope > tbody.orphan-unit'));
+    units.sort(function (a, b) {
       var av = cellValue(a, state.column), bv = cellValue(b, state.column);
       var cmp = av < bv ? -1 : av > bv ? 1 : 0;
       return state.dir === 'desc' ? -cmp : cmp;
     });
-    rows.forEach(function (row) { tbody.appendChild(row); });
+    units.forEach(function (unit) { table.appendChild(unit); });
 
-    document.querySelectorAll('#' + tableId + ' th[data-sort]').forEach(function (th) {
+    table.querySelectorAll('th[data-sort]').forEach(function (th) {
       th.classList.remove('sort-asc', 'sort-desc');
       if (th.dataset.sort === state.column) { th.classList.add('sort-' + state.dir); }
     });
@@ -166,6 +183,67 @@
     }
     applySort(tableId);
   });
+
+  document.addEventListener('click', function (e) {
+    var toggle = e.target.closest('.group-toggle');
+    if (!toggle) { return; }
+    var group = toggle.closest('tbody.orphan-group');
+    var expanded = group.classList.toggle('expanded');
+    toggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    toggle.title = expanded ? 'Hide files' : 'Show files';
+  });
+
+  // Select-all and the bulk button for Unlinked Downloads. The group
+  // checkbox (name="group_roots") and child checkboxes (name="inodes") are
+  // independent inputs, so a hidden (collapsed) child stays checked even
+  // when its group header is unchecked, and vice versa — the server would
+  // then receive selections the user never actually confirmed. Keep the
+  // header and its children in lockstep instead: checking/unchecking the
+  // header drives every child in that group to match; unchecking any one
+  // child un-checks the header (so the server sees only the children still
+  // checked, individually, not the group root); checking a child that
+  // completes the set re-checks the header. The server's own dedupe
+  // (`handled`) still covers header+children double-posting as a backstop.
+  function refreshBulkButton() {
+    var btn = document.getElementById('bulk-delete-btn');
+    if (!btn) { return; }
+    btn.disabled = !document.querySelector('#download-table .orphan-cb:checked');
+  }
+
+  function syncGroupCheckbox(cb) {
+    var row = cb.closest('tr');
+    var group = cb.closest('tbody.orphan-group');
+    if (!row || !group) { return; }
+
+    if (row.classList.contains('group-header')) {
+      group.querySelectorAll('tr.group-child .orphan-cb').forEach(function (childCb) {
+        childCb.checked = cb.checked;
+      });
+    } else if (row.classList.contains('group-child')) {
+      var headerCb = group.querySelector('tr.group-header .orphan-cb');
+      if (!headerCb) { return; }
+      if (!cb.checked) {
+        headerCb.checked = false;
+      } else {
+        var childCbs = group.querySelectorAll('tr.group-child .orphan-cb');
+        var allChecked = Array.prototype.every.call(childCbs, function (c) { return c.checked; });
+        if (allChecked) { headerCb.checked = true; }
+      }
+    }
+  }
+
+  document.addEventListener('change', function (e) {
+    if (e.target.id === 'select-all-download') {
+      document.querySelectorAll('#download-table .orphan-cb').forEach(function (cb) {
+        cb.checked = e.target.checked;
+      });
+    } else if (e.target.classList && e.target.classList.contains('orphan-cb')) {
+      syncGroupCheckbox(e.target);
+    }
+    if (e.target.closest('#download-table')) { refreshBulkButton(); }
+  });
+
+  document.addEventListener('htmx:afterSwap', refreshBulkButton);
 
   document.addEventListener('htmx:afterSwap', function () {
     applySort('download-table');

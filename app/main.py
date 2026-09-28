@@ -1,7 +1,10 @@
 """qBit Prunarr — FastAPI app."""
 import asyncio
+import hashlib
+import logging
 import os
 import time
+from html import escape
 from typing import Optional
 from urllib.parse import quote
 
@@ -10,6 +13,7 @@ from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.templating import Jinja2Templates
 
 from inode_scan import scan
+from grouping import OrphanGroup, group_download_orphans
 from orphans import (
     OrphanCandidate,
     classify_download_orphans,
@@ -17,6 +21,7 @@ from orphans import (
     delete_orphan,
     is_tv_path,
     path_tracked,
+    prune_empty_tree,
 )
 from pathmap import to_relative
 from plex import PlexClient
@@ -26,6 +31,7 @@ from sonarr import SonarrClient
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
+logger = logging.getLogger("qbit-prunarr")
 
 BUCKETS = [
     ("180d+", 180, None),
@@ -41,6 +47,7 @@ DOWNLOAD_SUBDIRS = ["torrents", "usenet"]
 QBIT_SUBDIRS = ["torrents"]  # subdirs qBittorrent has authority over — not usenet
 
 _scan_cache: dict[int, OrphanCandidate] = {}
+_group_cache: dict[str, OrphanGroup] = {}
 
 
 def _current_data_root() -> str:
@@ -351,6 +358,23 @@ def run_scan() -> tuple[list[OrphanCandidate], dict[str, str]]:
     for c in candidates:
         _scan_cache[c.inode] = c
 
+    # Ground truth for grouping is every file found under the download
+    # roots, orphaned or not: download_only covers both orphans and files
+    # qBit/*arr still track, and linked files that happen to live under a
+    # download root are real contents of those directories too.
+    download_files = _flatten(result.download_only) + [
+        p for p in result.linked
+        if any(p == sub or p.startswith(sub + "/") for sub in DOWNLOAD_SUBDIRS)
+    ]
+    groups, _ = group_download_orphans(
+        [c for c in candidates if c.category == "unlinked download"],
+        download_files,
+        set(DOWNLOAD_SUBDIRS),
+    )
+    _group_cache.clear()
+    for g in groups:
+        _group_cache[g.root] = g
+
     statuses = {
         "qBittorrent": qbit_status,
         "Sonarr": sonarr_status,
@@ -380,6 +404,7 @@ def _status_lines(statuses: dict[str, str]) -> list[str]:
 
 def _enrich_candidate(c: OrphanCandidate) -> dict:
     return {
+        "kind": "file",
         "inode": c.inode,
         "display_path": c.paths[0],
         "extra_paths": len(c.paths) - 1,
@@ -389,7 +414,59 @@ def _enrich_candidate(c: OrphanCandidate) -> dict:
     }
 
 
-_EMPTY_ORPHANS_CONTEXT = {"download_candidates": [], "review_candidates": [], "status_lines": []}
+def _group_dom_id(root: str) -> str:
+    """Stable, attribute-safe element id for a group - root paths contain
+    spaces, brackets and dots that can't go in an id selector as-is."""
+    return "orphan-group-" + hashlib.sha1(root.encode()).hexdigest()[:12]
+
+
+def _enrich_group(g: OrphanGroup) -> dict:
+    return {
+        "kind": "group",
+        "root": g.root,
+        "dom_id": _group_dom_id(g.root),
+        "display_path": g.root + "/",
+        "file_count": len(g.members),
+        "size_bytes": g.size_bytes,
+        "size_gb": _format_gb(g.size_bytes),
+        "children": [
+            {
+                **_enrich_candidate(m),
+                "display_path": os.path.relpath(m.paths[0], g.root),
+                "is_child": True,
+            }
+            for m in g.members
+        ],
+    }
+
+
+def _is_mac_junk(paths: list[str]) -> bool:
+    """True when every hardlink path is Finder metadata noise (.DS_Store or an AppleDouble ._* sidecar) - harmless to delete, and Finder just recreates it."""
+    return all(
+        os.path.basename(p) == ".DS_Store" or os.path.basename(p).startswith("._")
+        for p in paths
+    )
+
+
+def _download_units(download_candidates: list[dict]) -> list[dict]:
+    """Unlinked Downloads table rows: one unit per cached group, plus
+    every candidate that isn't a member of any group. Standalone macOS
+    Finder junk is dropped here only - it still counts as an orphan for
+    group rollup and a group delete still removes it, so a folder left
+    holding just a .DS_Store doesn't survive as a shell."""
+    grouped = {m.inode for g in _group_cache.values() for m in g.members}
+    units = [_enrich_group(g) for g in _group_cache.values()]
+    for c in download_candidates:
+        if c["inode"] in grouped:
+            continue
+        cached = _scan_cache.get(c["inode"])
+        if cached is not None and _is_mac_junk(cached.paths):
+            continue
+        units.append(c)
+    return units
+
+
+_EMPTY_ORPHANS_CONTEXT = {"download_units": [], "review_candidates": [], "status_lines": []}
 
 
 def _split_by_category(candidates: list[dict]) -> tuple[list[dict], list[dict]]:
@@ -437,7 +514,7 @@ async def orphans_scan(request: Request):
             request,
             "orphans.html",
             {
-                "download_candidates": download_candidates,
+                "download_units": _download_units(download_candidates),
                 "review_candidates": review_candidates,
                 "error": None,
                 "status_lines": _status_lines(statuses),
@@ -509,8 +586,98 @@ async def delete_single_orphan(inode: int):
         )
 
 
+def _under(path: str, root: str) -> bool:
+    return path == root or path.startswith(root + "/")
+
+
+def _delete_group(
+    data_root: str, group: OrphanGroup, fresh: list[OrphanCandidate]
+) -> tuple[int, int, int]:
+    """Best-effort delete of a group's members, re-verified against a
+    fresh scan. Returns (deleted, failed, skipped).
+
+    Only inodes that were members at scan time are touched - a file that
+    newly appeared in the folder since then was never shown to the user
+    as part of this group. A member missing from the fresh scan (tracked
+    again) or that grew a hardlink outside the group root is skipped
+    rather than deleted, and any skip also cancels empty-tree pruning.
+    """
+    fresh_by_inode = {c.inode: c for c in fresh if c.category == "unlinked download"}
+    deleted = failed = skipped = 0
+    for member in group.members:
+        candidate = fresh_by_inode.get(member.inode)
+        if candidate is None or not all(_under(p, group.root) for p in candidate.paths):
+            skipped += 1
+            continue
+        try:
+            _delete_candidate(data_root, candidate)
+            deleted += 1
+        except (OSError, ValueError) as e:
+            failed += 1
+            logger.warning("failed to delete orphan group member %s: %s", candidate.paths, e)
+    # A skipped member means the folder is live again (torrent re-added)
+    # - don't touch even its empty subdirectories.
+    if not skipped:
+        try:
+            prune_empty_tree(data_root, group.root, _boundary_for(group.root))
+        except (OSError, ValueError) as e:
+            logger.warning("failed to prune empty tree at %s: %s", group.root, e)
+    return deleted, failed, skipped
+
+
+def _group_message(dom_id: str, message: str, error: bool = False) -> Response:
+    style = ' style="color:red"' if error else ""
+    return Response(
+        status_code=200,
+        media_type="text/html",
+        content=f'<tbody id="{dom_id}"><tr><td colspan="4"{style}>{escape(message)}</td></tr></tbody>',
+    )
+
+
+@app.post("/orphans/groups/delete")
+async def delete_orphan_group(root: str = Form(...)):
+    # The posted root is only a cache key - never a filesystem path. An
+    # unknown root (stale page, or anything hand-crafted) deletes nothing -
+    # but it also must not look like a successful delete: an empty 200
+    # would have HTMX swap the row out as if it were gone, when nothing
+    # was actually touched. Every single delete elsewhere rebuilds
+    # _group_cache via run_scan, so this is reachable just by deleting one
+    # member of a 2-file group and then clicking the group's own button.
+    dom_id = _group_dom_id(root)
+    group = _group_cache.get(root)
+    if group is None:
+        return _group_message(
+            dom_id, "Group changed since this scan — rescan and try again", error=True
+        )
+
+    try:
+        fresh, _ = await asyncio.to_thread(run_scan)
+    except Exception as e:
+        return _group_message(dom_id, f"Re-verify failed: {e}", error=True)
+
+    deleted, failed, skipped = _delete_group(_current_data_root(), group, fresh)
+    total = len(group.members)
+    if failed:
+        return _group_message(dom_id, f"{failed} of {total} deletes failed — check logs", error=True)
+    if skipped:
+        return _group_message(dom_id, f"Deleted {deleted}; {skipped} no longer orphans — skipped")
+    return Response(status_code=200, content="")
+
+
 @app.post("/orphans/delete")
-async def bulk_delete_orphans(inodes: list[int] = Form(...)):
+async def bulk_delete_orphans(
+    inodes: list[int] = Form(default=[]),
+    group_roots: list[str] = Form(default=[]),
+):
+    # Resolve groups BEFORE the re-verify scan - run_scan rebuilds
+    # _group_cache, and membership has to be what the user was shown.
+    # dict.fromkeys dedupes a root posted twice (header + a double-submit,
+    # or the same checkbox posted more than once) so it can't run
+    # _delete_group on the same group twice and flash a spurious failure
+    # from re-deleting files the first pass already removed.
+    unique_roots = list(dict.fromkeys(group_roots))
+    groups = [_group_cache[r] for r in unique_roots if r in _group_cache]
+    stale_roots = [r for r in unique_roots if r not in _group_cache]
     try:
         fresh_candidates, _ = await asyncio.to_thread(run_scan)
         fresh_by_inode = {c.inode: c for c in fresh_candidates}
@@ -522,17 +689,38 @@ async def bulk_delete_orphans(inodes: list[int] = Form(...)):
 
     data_root = _current_data_root()
     failed = 0
-    for inode in inodes:
+    attempted = 0
+    handled: set[int] = set()
+    for group in groups:
+        _, group_failed, _ = _delete_group(data_root, group, fresh_candidates)
+        failed += group_failed
+        attempted += len(group.members)
+        handled.update(m.inode for m in group.members)
+
+    for inode in dict.fromkeys(inodes):
+        if inode in handled:
+            continue
+        attempted += 1
         candidate = fresh_by_inode.get(inode)
         if candidate is None:
             continue
         try:
             _delete_candidate(data_root, candidate)
-        except (OSError, ValueError):
+        except (OSError, ValueError) as e:
             failed += 1
+            logger.warning("failed to delete orphan inode %s: %s", inode, e)
 
+    messages = []
     if failed:
-        msg = quote(f"{failed} of {len(inodes)} deletes failed — check logs")
-        return RedirectResponse(url=f"/orphans?flash={msg}", status_code=302)
+        messages.append(f"{failed} of {attempted} deletes failed — check logs")
+    if stale_roots:
+        noun = "group" if len(stale_roots) == 1 else "groups"
+        messages.append(
+            f"{len(stale_roots)} selected {noun} changed since this scan — rescan and try again"
+        )
+    if messages:
+        return RedirectResponse(
+            url=f"/orphans?flash={quote('; '.join(messages))}", status_code=302
+        )
 
     return RedirectResponse(url="/orphans", status_code=302)
