@@ -40,9 +40,11 @@
     button[hx-delete]:hover { background: var(--danger-hover); }
     button.group-delete { padding: 4px 10px; background: var(--danger); color: white; border: none; border-radius: 4px; cursor: pointer; }
     button.group-delete:hover { background: var(--danger-hover); }
-    .group-toggle { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 1.4em; width: 1.6em; line-height: 1; vertical-align: middle; padding: 0 6px 0 0; transition: transform 0.15s; }
-    .orphan-group.expanded .group-toggle { display: inline-block; transform: rotate(90deg); }
-    .group-count { color: var(--text-muted); }
+    .group-toggle { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 1em; min-width: 7.5em; text-align: left; white-space: nowrap; padding: 0 8px 0 0; }
+    .group-chevron { display: inline-block; font-size: 1.4em; line-height: 1; vertical-align: middle; transition: transform 0.15s; }
+    .orphan-group.expanded .group-chevron { transform: rotate(90deg); }
+    .group-count { color: var(--accent); font-size: 0.95em; }
+    .group-toggle:hover .group-count { text-decoration: underline; }
     .orphan-group:not(.expanded) tr.group-child { display: none; }
     tr.group-child td:nth-child(2) { padding-left: 36px; color: var(--text-muted); }
     th.sortable { cursor: pointer; user-select: none; }

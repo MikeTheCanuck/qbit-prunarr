@@ -530,7 +530,9 @@ def test_fully_orphaned_directory_renders_as_one_collapsed_group(tmp_path):
     region = _table_region(response.text, "download-table")
     assert f'data-path="{BLUEBIRD}"' in region
     assert 'data-size-bytes="5030"' in region
-    assert "(3 files)" in region
+    assert '<span class="group-count">3 files</span>' in region
+    # Verify the count is inside the button
+    assert 'class="group-toggle"' in region and '<span class="group-count">3 files</span>' in region
     assert 'class="orphan-unit orphan-group"' in region  # collapsed: no "expanded"
     assert region.count('class="group-child"') == 3
     assert main._group_cache[BLUEBIRD].size_bytes == 5030
@@ -899,7 +901,7 @@ def test_group_child_rows_still_include_mac_junk_files(tmp_path):
 
     region = _table_region(response.text, "download-table")
     assert ".DS_Store" in region
-    assert "(4 files)" in region
+    assert '<span class="group-count">4 files</span>' in region
 
 
 def test_is_mac_junk_helper():
