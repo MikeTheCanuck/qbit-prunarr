@@ -13,6 +13,7 @@
               hx-target="#{{ g.dom_id }}"
               hx-swap="outerHTML"
               hx-confirm="Delete all {{ g.file_count }} files under {{ g.display_path }}?"
+              hx-params="root"
               hx-disabled-elt="this">
         Delete
       </button>

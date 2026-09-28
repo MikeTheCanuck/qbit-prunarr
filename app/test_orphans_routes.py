@@ -648,6 +648,9 @@ def test_group_delete_skips_members_that_are_no_longer_orphans(tmp_path):
 
 
 def test_group_delete_with_unknown_root_deletes_nothing(tmp_path):
+    """An unknown root (stale page, or a hand-crafted path) must not return
+    an empty 200 - HTMX would swap that in as if the delete had succeeded,
+    silently removing the row from the page while the files stay put."""
     import os
     root = str(tmp_path)
     _make_bluebird(root)
@@ -658,8 +661,36 @@ def test_group_delete_with_unknown_root_deletes_nothing(tmp_path):
         stale = client.post("/orphans/groups/delete", data={"root": "torrents/completed/radarr"})
         forged = client.post("/orphans/groups/delete", data={"root": "../../etc"})
 
-    assert stale.status_code == 200 and stale.text == ""
-    assert forged.status_code == 200 and forged.text == ""
+    assert stale.status_code == 200
+    assert "changed since this scan" in stale.text
+    assert forged.status_code == 200
+    assert "changed since this scan" in forged.text
+    assert os.path.exists(os.path.join(root, *BLUEBIRD.split("/"), "BDMV", "STREAM", "00000.m2ts"))
+
+
+def test_bulk_delete_with_unknown_group_root_flashes_and_deletes_nothing_in_that_group(tmp_path):
+    """Every single delete re-scans and rebuilds `_group_cache`; a group
+    root posted by a stale page (or already deleted by another request)
+    is no longer a key in that cache. Silently skipping it would let the
+    bulk redirect look like a clean success with no indication that group
+    was never touched."""
+    import os
+    root = str(tmp_path)
+    _make_bluebird(root)
+
+    with _services(qbit_paths={OTHER_MOVIE}):
+        client = TestClient(app, follow_redirects=False)
+        client.post("/orphans/scan")
+        response = client.post(
+            "/orphans/delete",
+            data={"group_roots": ["torrents/completed/radarr/does-not-exist"]},
+        )
+
+    from urllib.parse import unquote
+
+    assert response.status_code == 302
+    assert "flash=" in response.headers["location"]
+    assert "changed since this scan" in unquote(response.headers["location"])
     assert os.path.exists(os.path.join(root, *BLUEBIRD.split("/"), "BDMV", "STREAM", "00000.m2ts"))
 
 
@@ -731,3 +762,103 @@ def test_bulk_delete_with_nothing_selected_is_a_no_op_redirect(tmp_path):
         response = client.post("/orphans/delete", data={})
 
     assert response.status_code == 302
+
+
+def test_bulk_delete_dedupes_duplicate_group_roots(tmp_path):
+    """The same group root posted twice (e.g. a double-submitted form)
+    must not run `_delete_group` on it twice - the second pass would find
+    every member already gone and flash a spurious 'deletes failed'."""
+    import os
+    root = str(tmp_path)
+    _make_bluebird(root)
+
+    with _services(qbit_paths={OTHER_MOVIE}):
+        client = TestClient(app, follow_redirects=False)
+        client.post("/orphans/scan")
+        response = client.post(
+            "/orphans/delete",
+            data={"group_roots": [BLUEBIRD, BLUEBIRD]},
+        )
+
+    assert response.status_code == 302
+    assert "flash=" not in response.headers["location"]
+    assert not os.path.exists(os.path.join(root, *BLUEBIRD.split("/")))
+
+
+def test_group_delete_skips_member_with_hardlink_escaping_the_group_root(tmp_path):
+    """A member's file gains a second name outside the group root between
+    scan and delete-click (a duplicate copy dropped elsewhere under a
+    download root). Deleting "this folder" can't touch it: unlinking only
+    the in-root name would still leave the file's data referenced by the
+    escaped name, silently keeping a copy alive under a different path
+    than the one the user was shown, so that member has to be skipped -
+    not deleted at all - and the skip also cancels the empty-tree prune."""
+    import os
+    root = str(tmp_path)
+    _make_bluebird(root)
+
+    with _services(qbit_paths={OTHER_MOVIE}):
+        client = TestClient(app)
+        client.post("/orphans/scan")
+
+        clpi_in_root = os.path.join(
+            root, *BLUEBIRD.split("/"), "BDMV", "BACKUP", "CLIPINF", "00153.clpi"
+        )
+        escaped = os.path.join(root, "torrents", "completed", "radarr", "escaped.clpi")
+        os.link(clpi_in_root, escaped)
+
+        response = client.post("/orphans/groups/delete", data={"root": BLUEBIRD})
+
+    assert response.status_code == 200
+    assert "skipped" in response.text.lower()
+    assert os.path.exists(clpi_in_root)
+    assert os.path.exists(escaped)
+    # The other two members deleted normally, but the skip cancels pruning
+    # of the group root's (now not-fully-emptied) directory tree.
+    assert not os.path.exists(
+        os.path.join(root, *BLUEBIRD.split("/"), "BDMV", "STREAM", "00000.m2ts")
+    )
+    assert os.path.isdir(os.path.join(root, *BLUEBIRD.split("/")))
+
+
+# --- logging on delete failure (Fix F3) -------------------------------
+
+import logging
+
+
+def test_bulk_delete_per_inode_failure_is_logged(tmp_path, caplog):
+    import os
+    path_a = os.path.join(str(tmp_path), "torrents", "a.mkv")
+    _make_file(path_a)
+
+    with _services():
+        client = TestClient(app, follow_redirects=False)
+        client.post("/orphans/scan")
+        inodes = list(main._scan_cache.keys())
+        with patch("main.delete_orphan", side_effect=OSError("boom")):
+            with caplog.at_level(logging.WARNING, logger="qbit-prunarr"):
+                client.post("/orphans/delete", data={"inodes": [str(i) for i in inodes]})
+
+    assert "boom" in caplog.text
+    assert str(inodes[0]) in caplog.text
+
+
+def test_group_delete_member_failure_is_logged(tmp_path, caplog):
+    import os
+    root = str(tmp_path)
+    _make_bluebird(root)
+    real_delete = main.delete_orphan
+
+    def flaky_delete(data_root, relative_path, boundary):
+        if relative_path.endswith("00153.clpi"):
+            raise OSError("permission denied")
+        return real_delete(data_root, relative_path, boundary)
+
+    with _services(qbit_paths={OTHER_MOVIE}):
+        client = TestClient(app)
+        client.post("/orphans/scan")
+        with patch("main.delete_orphan", side_effect=flaky_delete):
+            with caplog.at_level(logging.WARNING, logger="qbit-prunarr"):
+                client.post("/orphans/groups/delete", data={"root": BLUEBIRD})
+
+    assert "permission denied" in caplog.text

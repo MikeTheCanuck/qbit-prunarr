@@ -193,11 +193,41 @@
 
   // Select-all and the bulk button for Unlinked Downloads. The group
   // checkbox (name="group_roots") and child checkboxes (name="inodes") are
-  // independent; the server de-duplicates a file selected both ways.
+  // independent inputs, so a hidden (collapsed) child stays checked even
+  // when its group header is unchecked, and vice versa — the server would
+  // then receive selections the user never actually confirmed. Keep the
+  // header and its children in lockstep instead: checking/unchecking the
+  // header drives every child in that group to match; unchecking any one
+  // child un-checks the header (so the server sees only the children still
+  // checked, individually, not the group root); checking a child that
+  // completes the set re-checks the header. The server's own dedupe
+  // (`handled`) still covers header+children double-posting as a backstop.
   function refreshBulkButton() {
     var btn = document.getElementById('bulk-delete-btn');
     if (!btn) { return; }
     btn.disabled = !document.querySelector('#download-table .orphan-cb:checked');
+  }
+
+  function syncGroupCheckbox(cb) {
+    var row = cb.closest('tr');
+    var group = cb.closest('tbody.orphan-group');
+    if (!row || !group) { return; }
+
+    if (row.classList.contains('group-header')) {
+      group.querySelectorAll('tr.group-child .orphan-cb').forEach(function (childCb) {
+        childCb.checked = cb.checked;
+      });
+    } else if (row.classList.contains('group-child')) {
+      var headerCb = group.querySelector('tr.group-header .orphan-cb');
+      if (!headerCb) { return; }
+      if (!cb.checked) {
+        headerCb.checked = false;
+      } else {
+        var childCbs = group.querySelectorAll('tr.group-child .orphan-cb');
+        var allChecked = Array.prototype.every.call(childCbs, function (c) { return c.checked; });
+        if (allChecked) { headerCb.checked = true; }
+      }
+    }
   }
 
   document.addEventListener('change', function (e) {
@@ -205,6 +235,8 @@
       document.querySelectorAll('#download-table .orphan-cb').forEach(function (cb) {
         cb.checked = e.target.checked;
       });
+    } else if (e.target.classList && e.target.classList.contains('orphan-cb')) {
+      syncGroupCheckbox(e.target);
     }
     if (e.target.closest('#download-table')) { refreshBulkButton(); }
   });

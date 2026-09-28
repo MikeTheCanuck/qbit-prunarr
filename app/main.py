@@ -1,6 +1,7 @@
 """qBit Prunarr — FastAPI app."""
 import asyncio
 import hashlib
+import logging
 import os
 import time
 from html import escape
@@ -30,6 +31,7 @@ from sonarr import SonarrClient
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
+logger = logging.getLogger("qbit-prunarr")
 
 BUCKETS = [
     ("180d+", 180, None),
@@ -593,15 +595,16 @@ def _delete_group(
         try:
             _delete_candidate(data_root, candidate)
             deleted += 1
-        except (OSError, ValueError):
+        except (OSError, ValueError) as e:
             failed += 1
+            logger.warning("failed to delete orphan group member %s: %s", candidate.paths, e)
     # A skipped member means the folder is live again (torrent re-added)
     # - don't touch even its empty subdirectories.
     if not skipped:
         try:
             prune_empty_tree(data_root, group.root, _boundary_for(group.root))
-        except (OSError, ValueError):
-            pass
+        except (OSError, ValueError) as e:
+            logger.warning("failed to prune empty tree at %s: %s", group.root, e)
     return deleted, failed, skipped
 
 
@@ -617,11 +620,18 @@ def _group_message(dom_id: str, message: str, error: bool = False) -> Response:
 @app.post("/orphans/groups/delete")
 async def delete_orphan_group(root: str = Form(...)):
     # The posted root is only a cache key - never a filesystem path. An
-    # unknown root (stale page, or anything hand-crafted) deletes nothing.
+    # unknown root (stale page, or anything hand-crafted) deletes nothing -
+    # but it also must not look like a successful delete: an empty 200
+    # would have HTMX swap the row out as if it were gone, when nothing
+    # was actually touched. Every single delete elsewhere rebuilds
+    # _group_cache via run_scan, so this is reachable just by deleting one
+    # member of a 2-file group and then clicking the group's own button.
+    dom_id = _group_dom_id(root)
     group = _group_cache.get(root)
     if group is None:
-        return Response(status_code=200, content="")
-    dom_id = _group_dom_id(root)
+        return _group_message(
+            dom_id, "Group changed since this scan — rescan and try again", error=True
+        )
 
     try:
         fresh, _ = await asyncio.to_thread(run_scan)
@@ -644,7 +654,13 @@ async def bulk_delete_orphans(
 ):
     # Resolve groups BEFORE the re-verify scan - run_scan rebuilds
     # _group_cache, and membership has to be what the user was shown.
-    groups = [_group_cache[r] for r in group_roots if r in _group_cache]
+    # dict.fromkeys dedupes a root posted twice (header + a double-submit,
+    # or the same checkbox posted more than once) so it can't run
+    # _delete_group on the same group twice and flash a spurious failure
+    # from re-deleting files the first pass already removed.
+    unique_roots = list(dict.fromkeys(group_roots))
+    groups = [_group_cache[r] for r in unique_roots if r in _group_cache]
+    stale_roots = [r for r in unique_roots if r not in _group_cache]
     try:
         fresh_candidates, _ = await asyncio.to_thread(run_scan)
         fresh_by_inode = {c.inode: c for c in fresh_candidates}
@@ -673,11 +689,21 @@ async def bulk_delete_orphans(
             continue
         try:
             _delete_candidate(data_root, candidate)
-        except (OSError, ValueError):
+        except (OSError, ValueError) as e:
             failed += 1
+            logger.warning("failed to delete orphan inode %s: %s", inode, e)
 
+    messages = []
     if failed:
-        msg = quote(f"{failed} of {attempted} deletes failed — check logs")
-        return RedirectResponse(url=f"/orphans?flash={msg}", status_code=302)
+        messages.append(f"{failed} of {attempted} deletes failed — check logs")
+    if stale_roots:
+        noun = "group" if len(stale_roots) == 1 else "groups"
+        messages.append(
+            f"{len(stale_roots)} selected {noun} changed since this scan — rescan and try again"
+        )
+    if messages:
+        return RedirectResponse(
+            url=f"/orphans?flash={quote('; '.join(messages))}", status_code=302
+        )
 
     return RedirectResponse(url="/orphans", status_code=302)
