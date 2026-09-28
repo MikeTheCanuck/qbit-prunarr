@@ -862,3 +862,48 @@ def test_group_delete_member_failure_is_logged(tmp_path, caplog):
                 client.post("/orphans/groups/delete", data={"root": BLUEBIRD})
 
     assert "permission denied" in caplog.text
+
+
+def test_standalone_mac_junk_files_are_hidden_from_download_table(tmp_path):
+    """.DS_Store and ._* AppleDouble sidecars are Finder noise, not
+    meaningful orphans - torrents/incoming is a direct child of the
+    torrents/ boundary, so nothing here groups and each junk file would
+    otherwise render as its own pointless standalone row."""
+    import os
+    root = str(tmp_path)
+    _make_file(os.path.join(root, "torrents", "incoming", "real.mkv"), content=b"x" * 5000)
+    _make_file(os.path.join(root, "torrents", "incoming", ".DS_Store"), content=b"x" * 10)
+    _make_file(os.path.join(root, "torrents", "incoming", "._foo.mkv"), content=b"x" * 10)
+
+    with _services():
+        response = TestClient(app).post("/orphans/scan")
+
+    region = _table_region(response.text, "download-table")
+    assert "real.mkv" in region
+    assert ".DS_Store" not in region
+    assert "._foo.mkv" not in region
+
+
+def test_group_child_rows_still_include_mac_junk_files(tmp_path):
+    """A .DS_Store inside a fully-orphaned group folder is still real
+    group content: it's counted in the file count and shown when the
+    group is expanded, because a group delete has to remove it too or
+    the folder would survive as a shell containing only .DS_Store."""
+    import os
+    root = str(tmp_path)
+    _make_bluebird(root)
+    _make_file(os.path.join(root, *BLUEBIRD.split("/"), "BDMV", ".DS_Store"), content=b"x" * 10)
+
+    with _services(qbit_paths={OTHER_MOVIE}):
+        response = TestClient(app).post("/orphans/scan")
+
+    region = _table_region(response.text, "download-table")
+    assert ".DS_Store" in region
+    assert "(4 files)" in region
+
+
+def test_is_mac_junk_helper():
+    assert main._is_mac_junk(["torrents/incoming/.DS_Store"])
+    assert main._is_mac_junk(["torrents/incoming/._foo.mkv"])
+    assert not main._is_mac_junk(["torrents/incoming/x.DS_Store"])
+    assert not main._is_mac_junk(["torrents/incoming/._foo.mkv", "torrents/incoming/real.mkv"])

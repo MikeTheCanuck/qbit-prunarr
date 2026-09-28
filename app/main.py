@@ -440,12 +440,29 @@ def _enrich_group(g: OrphanGroup) -> dict:
     }
 
 
+def _is_mac_junk(paths: list[str]) -> bool:
+    """True when every hardlink path is Finder metadata noise (.DS_Store or an AppleDouble ._* sidecar) - harmless to delete, and Finder just recreates it."""
+    return all(
+        os.path.basename(p) == ".DS_Store" or os.path.basename(p).startswith("._")
+        for p in paths
+    )
+
+
 def _download_units(download_candidates: list[dict]) -> list[dict]:
     """Unlinked Downloads table rows: one unit per cached group, plus
-    every candidate that isn't a member of any group."""
+    every candidate that isn't a member of any group. Standalone macOS
+    Finder junk is dropped here only - it still counts as an orphan for
+    group rollup and a group delete still removes it, so a folder left
+    holding just a .DS_Store doesn't survive as a shell."""
     grouped = {m.inode for g in _group_cache.values() for m in g.members}
     units = [_enrich_group(g) for g in _group_cache.values()]
-    units += [c for c in download_candidates if c["inode"] not in grouped]
+    for c in download_candidates:
+        if c["inode"] in grouped:
+            continue
+        cached = _scan_cache.get(c["inode"])
+        if cached is not None and _is_mac_junk(cached.paths):
+            continue
+        units.append(c)
     return units
 
 
