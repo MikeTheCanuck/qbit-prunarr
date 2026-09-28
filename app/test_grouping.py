@@ -80,23 +80,43 @@ def test_sibling_orphaned_dirs_form_separate_groups_not_one():
 
 def test_rollup_never_climbs_into_the_scan_root_itself():
     """With nothing non-orphaned anywhere, two top-level dirs must still be
-    two groups - never one group rooted at 'torrents'."""
+    two groups - never one group rooted at 'torrents/completed' (a direct
+    child of the scan root) and never at 'torrents' itself. Also covers:
+    a directory two levels below the boundary still groups normally."""
     cands = [
-        _c(1, "torrents/A/x.mkv"), _c(2, "torrents/A/y.mkv"),
-        _c(3, "torrents/B/x.mkv"), _c(4, "torrents/B/y.mkv"),
+        _c(1, "torrents/completed/A/x.mkv"), _c(2, "torrents/completed/A/y.mkv"),
+        _c(3, "torrents/completed/B/x.mkv"), _c(4, "torrents/completed/B/y.mkv"),
     ]
 
     groups, _ = group_download_orphans(cands, _files(cands), BOUNDS)
 
-    assert sorted(g.root for g in groups) == ["torrents/A", "torrents/B"]
+    assert sorted(g.root for g in groups) == ["torrents/completed/A", "torrents/completed/B"]
 
 
 def test_usenet_is_a_boundary_too():
+    """'usenet/complete' is itself a direct child of the 'usenet' scan
+    root, so the group must root one level deeper, at 'Show'."""
     cands = [_c(1, "usenet/complete/Show/a.mkv"), _c(2, "usenet/complete/Show/b.mkv")]
 
     groups, _ = group_download_orphans(cands, _files(cands), BOUNDS)
 
-    assert [g.root for g in groups] == ["usenet/complete"]
+    assert [g.root for g in groups] == ["usenet/complete/Show"]
+
+
+def test_direct_child_of_scan_root_is_never_a_group_root():
+    """The live NAS case: qBittorrent's own incoming/ directory, not a
+    torrent - its stray top-level orphans must never roll up into a group
+    rooted at 'torrents/incoming' itself."""
+    cands = [
+        _c(1, "torrents/incoming/.DS_Store"),
+        _c(2, "torrents/incoming/x.torrent"),
+        _c(3, "torrents/incoming/radarr/Movie/movie.mkv"),
+    ]
+
+    groups, standalone = group_download_orphans(cands, _files(cands), BOUNDS)
+
+    assert groups == []
+    assert {c.inode for c in standalone} == {1, 2, 3}
 
 
 def test_single_orphan_alone_in_its_folder_stays_standalone():
@@ -114,23 +134,23 @@ def test_candidate_with_hardlinks_in_two_dirs_never_joins_a_group():
     a second name outside the group's folder would silently lose that
     file too."""
     cands = [
-        _c(1, "torrents/A/shared.mkv", "torrents/B/shared.mkv"),
-        _c(2, "torrents/A/y.mkv"), _c(3, "torrents/A/z.mkv"),
+        _c(1, "torrents/radarr/A/shared.mkv", "torrents/radarr/B/shared.mkv"),
+        _c(2, "torrents/radarr/A/y.mkv"), _c(3, "torrents/radarr/A/z.mkv"),
     ]
-    files = _files(cands, "torrents/B/keep.mkv")
+    files = _files(cands, "torrents/radarr/B/keep.mkv")
 
     groups, standalone = group_download_orphans(cands, files, BOUNDS)
 
     assert [c.inode for c in standalone] == [1]
     assert len(groups) == 1
-    assert groups[0].root == "torrents/A"
+    assert groups[0].root == "torrents/radarr/A"
     assert {m.inode for m in groups[0].members} == {2, 3}
 
 
 def test_candidate_with_both_hardlinks_inside_one_group_joins_it():
     cands = [
-        _c(1, "torrents/A/x.mkv", "torrents/A/sub/x-copy.mkv"),
-        _c(2, "torrents/A/y.mkv"),
+        _c(1, "torrents/radarr/A/x.mkv", "torrents/radarr/A/sub/x-copy.mkv"),
+        _c(2, "torrents/radarr/A/y.mkv"),
     ]
 
     groups, standalone = group_download_orphans(cands, _files(cands), BOUNDS)
@@ -140,13 +160,13 @@ def test_candidate_with_both_hardlinks_inside_one_group_joins_it():
 
 
 def test_name_prefix_sibling_does_not_block_rollup():
-    """'torrents/Pack2/keep.mkv' is not inside 'torrents/Pack'."""
-    cands = [_c(1, "torrents/Pack/a.mkv"), _c(2, "torrents/Pack/b.mkv")]
-    files = _files(cands, "torrents/Pack2/keep.mkv")
+    """'torrents/radarr/Pack2/keep.mkv' is not inside 'torrents/radarr/Pack'."""
+    cands = [_c(1, "torrents/radarr/Pack/a.mkv"), _c(2, "torrents/radarr/Pack/b.mkv")]
+    files = _files(cands, "torrents/radarr/Pack2/keep.mkv")
 
     groups, _ = group_download_orphans(cands, files, BOUNDS)
 
-    assert [g.root for g in groups] == ["torrents/Pack"]
+    assert [g.root for g in groups] == ["torrents/radarr/Pack"]
 
 
 def test_path_outside_every_boundary_stays_standalone():

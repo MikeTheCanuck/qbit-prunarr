@@ -5,7 +5,10 @@ raw disc rip fragments into hundreds of rows. qBittorrent has already
 forgotten the torrent by the time its files are orphans, so there's no
 torrent name left to group by - grouping is inferred purely from directory
 structure: a directory rolls up only if every file the scan found under
-it is an orphan candidate.
+it is an orphan candidate. A group root is also never a direct child of a
+scan boundary (`torrents`, `usenet`) - directories like `torrents/incoming`
+or `usenet/complete` are download-client structure, not a torrent's own
+folder, even if everything under them happens to be orphaned.
 """
 import os
 from dataclasses import dataclass
@@ -33,11 +36,20 @@ def _ancestors(path: str):
 
 def _group_root(path: str, blocked: set[str], boundaries: set[str]) -> str | None:
     """Topmost directory above `path` that contains nothing but orphans,
-    strictly inside a boundary. None if the immediate parent is already
-    blocked, or the path isn't under any boundary at all."""
+    strictly inside a boundary, and never a direct child of a boundary.
+    None if the immediate parent is already blocked, or the path isn't
+    under any boundary at all.
+
+    A directory directly under a boundary (`torrents/incoming`,
+    `usenet/complete`) is download-client structure, not a torrent's own
+    folder, so it can never be assigned as a root - the climb stops one
+    level short of it, keeping whatever root (possibly None) was found
+    below."""
     root = None
     for directory in _ancestors(path):
         if directory in boundaries:
+            return root
+        if os.path.dirname(directory) in boundaries:
             return root
         if directory in blocked:
             # Still have to confirm the path lives under a boundary before
