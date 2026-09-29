@@ -51,12 +51,26 @@
     th.sortable::after { content: ''; margin-left: 4px; color: var(--accent); }
     th.sort-asc::after { content: '\2191'; }
     th.sort-desc::after { content: '\2193'; }
+    .tabs { display: flex; gap: 4px; margin-top: 24px; border-bottom: 2px solid var(--border); overflow-x: auto; overflow-y: hidden; }
+    .tabs button { font: inherit; font-size: 15px; background: var(--header-bg); color: var(--text-muted); border: 1px solid var(--border);
+      border-bottom: 0; border-radius: 8px 8px 0 0; padding: 9px 16px; margin-bottom: -2px; cursor: pointer; white-space: nowrap; }
+    .tabs button:hover { color: var(--text); background: var(--panel-bg); }
+    .tabs button[aria-selected="true"] { background: var(--panel-bg); color: var(--text); font-weight: 600;
+      border-top: 3px solid var(--accent); border-bottom: 2px solid var(--panel-bg); }
+    .tabs button.review-tab[aria-selected="true"] { border-top-color: var(--warn-border); color: var(--warn-text); }
+    .tab-count { display: inline-block; font-size: 12px; font-weight: 500; margin-left: 6px; padding: 1px 8px; border-radius: 10px;
+      background: var(--border); color: var(--text-muted); }
+    .tabs button[aria-selected="true"] .tab-count { background: var(--accent); color: #fff; }
+    .tabs button.review-tab[aria-selected="true"] .tab-count { background: var(--warn-border); }
+    .tab-panel { display: none; padding-top: 12px; } .tab-panel.active { display: block; }
+    .tab-panel h2 { margin-top: 8px; }
+    details.service-status { margin: 12px 0 0; color: var(--text-muted); }
+    details.service-status summary { cursor: pointer; }
     .needs-review {
       background: var(--warn-bg);
       border: 2px solid var(--warn-border);
       border-radius: 6px;
       padding: 4px 20px 20px;
-      margin-top: 32px;
     }
     .needs-review h2 { color: var(--warn-text); margin-top: 20px; }
     .needs-review .section-subtitle { color: var(--warn-text); opacity: 0.85; }
@@ -78,11 +92,24 @@
   {% if error %}<div class="error-banner">{{ error }}</div>{% endif %}
 
   {% if status_lines %}
-  <ul id="service-status">
-    {% for line in status_lines %}<li>{{ line }}</li>{% endfor %}
-  </ul>
+  <details class="service-status">
+    <summary>Service status</summary>
+    <ul id="service-status">
+      {% for line in status_lines %}<li>{{ line }}</li>{% endfor %}
+    </ul>
+  </details>
   {% endif %}
 
+  {% set download_bytes = download_units | sum(attribute="size_bytes") %}
+  {% set review_bytes = review_candidates | sum(attribute="size_bytes") %}
+  <nav class="tabs" role="tablist">
+    <button type="button" role="tab" data-tab="download">Unlinked Downloads
+      <span class="tab-count">{{ download_units | length }} · {{ "%.1f" % (download_bytes / 1e9) }} GB</span></button>
+    <button type="button" role="tab" data-tab="review" class="review-tab">Needs Review
+      <span class="tab-count">{{ review_candidates | length }} · {{ "%.1f" % (review_bytes / 1e9) }} GB</span></button>
+  </nav>
+
+  <section class="tab-panel" data-panel="download" role="tabpanel">
   <h2>Unlinked Downloads</h2>
   <p class="section-subtitle">Not referenced by any active torrent — generally safe to reclaim.</p>
   <form method="post" action="/orphans/delete" id="download-form">
@@ -109,7 +136,9 @@
       {% endfor %}
     </table>
   </form>
+  </section>
 
+  <section class="tab-panel" data-panel="review" role="tabpanel">
   <div class="needs-review">
     <h2>Needs Review</h2>
     <p class="section-subtitle">Sonarr/Radarr + Plex don't confirm this file. Two likely explanations: it's a safe duplicate already tracked elsewhere, or it's real content that never got imported. Check each one before deleting — don't assume either way.</p>
@@ -131,6 +160,7 @@
       </table>
     </form>
   </div>
+  </section>
 </div>
 
 <script>
@@ -252,6 +282,30 @@
 
   applySort('download-table');
   applySort('review-table');
+
+  // Tabs: remember the last one, and re-apply it after a scan swaps the
+  // results in (the tab row lives inside #scan-results so its counts update).
+  var TAB_KEY = 'orphans-tab';
+  function showTab(name) {
+    var tabs = document.querySelectorAll('.tabs [data-tab]');
+    if (!tabs.length) { return; }
+    var known = Array.prototype.some.call(tabs, function (t) { return t.dataset.tab === name; });
+    if (!known) { name = 'download'; }
+    tabs.forEach(function (t) { t.setAttribute('aria-selected', t.dataset.tab === name ? 'true' : 'false'); });
+    document.querySelectorAll('.tab-panel').forEach(function (p) {
+      p.classList.toggle('active', p.dataset.panel === name);
+    });
+    try { localStorage.setItem(TAB_KEY, name); } catch (e) {}
+  }
+  function currentTab() {
+    try { return localStorage.getItem(TAB_KEY) || 'download'; } catch (e) { return 'download'; }
+  }
+  document.addEventListener('click', function (e) {
+    var tab = e.target.closest('.tabs [data-tab]');
+    if (tab) { showTab(tab.dataset.tab); }
+  });
+  document.addEventListener('htmx:afterSwap', function () { showTab(currentTab()); });
+  showTab(currentTab());
 </script>
 
 </body>

@@ -909,3 +909,29 @@ def test_is_mac_junk_helper():
     assert main._is_mac_junk(["torrents/incoming/._foo.mkv"])
     assert not main._is_mac_junk(["torrents/incoming/x.DS_Store"])
     assert not main._is_mac_junk(["torrents/incoming/._foo.mkv", "torrents/incoming/real.mkv"])
+
+
+def test_sections_render_as_tabs_with_counts(tmp_path):
+    """Unlinked Downloads and Needs Review are tabs on one page, not stacked
+    sections, and each tab shows how many items (and GB) are behind it."""
+    import os
+    root = str(tmp_path)
+    _make_file(os.path.join(root, "torrents", "seed.mkv"))
+    _make_file(os.path.join(root, "media", "movies", "orphan-movie.mkv"))
+
+    with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
+         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set(), get_all_queue_paths=set())), \
+         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set(), get_all_queue_paths=set())), \
+         patch("main.PlexClient", return_value=_mock_client(
+             get_all_movie_paths=set(), get_all_episode_paths=set()
+         )):
+        client = TestClient(app)
+        response = client.post("/orphans/scan")
+
+    html = response.text
+    assert 'data-tab="download"' in html and 'data-tab="review"' in html
+    assert 'data-panel="download"' in html and 'data-panel="review"' in html
+    # Each table lives inside its own tab panel.
+    assert html.index('data-panel="download"') < html.index('id="download-table"') < html.index('data-panel="review"')
+    assert html.index('data-panel="review"') < html.index('id="review-table"')
+    assert html.count('class="tab-count">1 ·') == 2
