@@ -935,3 +935,17 @@ def test_sections_render_as_tabs_with_counts(tmp_path):
     assert html.index('data-panel="download"') < html.index('id="download-table"') < html.index('data-panel="review"')
     assert html.index('data-panel="review"') < html.index('id="review-table"')
     assert html.count('class="tab-count">1 ·') == 2
+
+
+def test_tabs_show_no_counts_before_a_scan():
+    """Before any scan, a '0 · 0.0 GB' badge would read as a finished
+    analysis that found nothing, so the tabs show names only."""
+    response = TestClient(app).get("/orphans")
+    assert 'data-tab="download"' in response.text
+    assert 'class="tab-count"' not in response.text
+    assert "Not scanned yet" in response.text
+
+
+def test_needs_review_offers_folder_grouping():
+    response = TestClient(app).get("/orphans")
+    assert 'data-mode="folder"' in response.text and 'data-mode="flat"' in response.text

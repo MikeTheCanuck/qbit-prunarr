@@ -466,7 +466,7 @@ def _download_units(download_candidates: list[dict]) -> list[dict]:
     return units
 
 
-_EMPTY_ORPHANS_CONTEXT = {"download_units": [], "review_candidates": [], "status_lines": []}
+_EMPTY_ORPHANS_CONTEXT = {"download_units": [], "review_candidates": [], "status_lines": [], "scanned": False}
 
 
 def _split_by_category(candidates: list[dict]) -> tuple[list[dict], list[dict]]:
@@ -518,6 +518,7 @@ async def orphans_scan(request: Request):
                 "review_candidates": review_candidates,
                 "error": None,
                 "status_lines": _status_lines(statuses),
+                "scanned": True,
             },
         )
     except Exception:

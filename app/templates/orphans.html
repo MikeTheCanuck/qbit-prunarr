@@ -64,6 +64,15 @@
     .tabs button.review-tab[aria-selected="true"] .tab-count { background: var(--warn-border); }
     .tab-panel { display: none; padding-top: 12px; } .tab-panel.active { display: block; }
     .tab-panel h2 { margin-top: 8px; }
+    .not-scanned { color: var(--text-muted); margin: 14px 0 0; }
+    .sort-modes { color: var(--warn-text); margin: 0 0 8px; }
+    .sort-mode { font: inherit; font-size: 13px; background: var(--panel-bg); color: var(--text-muted); border: 1px solid var(--border);
+      border-radius: 4px; padding: 3px 10px; cursor: pointer; margin-left: 4px; }
+    .sort-mode.active { color: var(--text); border-color: var(--warn-border); background: var(--header-bg); font-weight: 600; }
+    tbody.folder-head td { background: var(--header-bg); color: var(--warn-text); font-weight: 600; padding-top: 10px;
+      border-top: 2px solid var(--warn-border); }
+    tbody.folder-head .folder-meta { color: var(--text-muted); font-weight: 400; margin-left: 8px; }
+    #review-table.folder-mode tbody.orphan-unit td:nth-child(2) { padding-left: 28px; }
     details.service-status { margin: 12px 0 0; color: var(--text-muted); }
     details.service-status summary { cursor: pointer; }
     .needs-review {
@@ -103,12 +112,17 @@
   {% set download_bytes = download_units | sum(attribute="size_bytes") %}
   {% set review_bytes = review_candidates | sum(attribute="size_bytes") %}
   <nav class="tabs" role="tablist">
-    <button type="button" role="tab" data-tab="download">Unlinked Downloads
-      <span class="tab-count">{{ download_units | length }} · {{ "%.1f" % (download_bytes / 1e9) }} GB</span></button>
-    <button type="button" role="tab" data-tab="review" class="review-tab">Needs Review
-      <span class="tab-count">{{ review_candidates | length }} · {{ "%.1f" % (review_bytes / 1e9) }} GB</span></button>
+    {# No counts until a scan has actually run: a "0 · 0.0 GB" badge would
+       look like a finished analysis that found nothing. #}
+    <button type="button" role="tab" data-tab="download">Unlinked Downloads{% if scanned %}
+      <span class="tab-count">{{ download_units | length }} · {{ "%.1f" % (download_bytes / 1e9) }} GB</span>{% endif %}</button>
+    <button type="button" role="tab" data-tab="review" class="review-tab">Needs Review{% if scanned %}
+      <span class="tab-count">{{ review_candidates | length }} · {{ "%.1f" % (review_bytes / 1e9) }} GB</span>{% endif %}</button>
   </nav>
 
+  {% if not scanned %}
+  <p class="not-scanned">Not scanned yet. Press <b>Scan Now</b> to find orphans.</p>
+  {% endif %}
   <section class="tab-panel" data-panel="download" role="tabpanel">
   <h2>Unlinked Downloads</h2>
   <p class="section-subtitle">Not referenced by any active torrent — generally safe to reclaim.</p>
@@ -143,6 +157,9 @@
     <h2>Needs Review</h2>
     <p class="section-subtitle">Sonarr/Radarr + Plex don't confirm this file. Two likely explanations: it's a safe duplicate already tracked elsewhere, or it's real content that never got imported. Check each one before deleting — don't assume either way.</p>
     <form method="post" action="/orphans/delete" id="review-form">
+      <p class="sort-modes">Show:
+        <button type="button" class="sort-mode" data-mode="folder">Grouped by folder</button>
+        <button type="button" class="sort-mode" data-mode="flat">Flat list</button></p>
       <table id="review-table">
         <thead>
           <tr>
@@ -172,8 +189,53 @@
   // Review tables sort independently of each other.
   var sortStates = {
     'download-table': { column: 'size', dir: 'desc' },
-    'review-table': { column: 'size', dir: 'desc' }
+    // Needs Review defaults to grouping by parent folder: orphans from one
+    // show or movie (a whole season of extras, say) need one decision
+    // together, not scattered by size among everything else.
+    'review-table': { column: 'folder', dir: 'asc' }
   };
+  try {
+    var savedMode = localStorage.getItem('orphans-review-mode');
+    if (savedMode === 'flat') { sortStates['review-table'] = { column: 'size', dir: 'desc' }; }
+  } catch (e) {}
+
+  function parentDir(path) {
+    var i = path.lastIndexOf('/');
+    return i > 0 ? path.slice(0, i) : '';
+  }
+
+  function formatGB(bytes) { return (bytes / 1e9).toFixed(2) + ' GB'; }
+
+  // Folder mode: units sorted by folder (biggest folder first), each folder
+  // introduced by a header row with its file count and total size.
+  function applyFolderGrouping(table, units) {
+    var folders = {};
+    units.forEach(function (u) {
+      var dir = parentDir(u.dataset.path || '');
+      (folders[dir] = folders[dir] || { units: [], bytes: 0 }).units.push(u);
+      folders[dir].bytes += parseInt(u.dataset.sizeBytes, 10) || 0;
+    });
+    var cols = table.querySelectorAll('thead th').length;
+    Object.keys(folders)
+      .sort(function (a, b) { return folders[b].bytes - folders[a].bytes || (a < b ? -1 : 1); })
+      .forEach(function (dir) {
+        var f = folders[dir];
+        var head = document.createElement('tbody');
+        head.className = 'folder-head';
+        var row = head.insertRow();
+        var cell = row.insertCell();
+        cell.colSpan = cols;
+        cell.textContent = (dir || '(top level)') + '/';
+        var meta = document.createElement('span');
+        meta.className = 'folder-meta';
+        meta.textContent = f.units.length + (f.units.length === 1 ? ' file, ' : ' files, ') + formatGB(f.bytes);
+        cell.appendChild(meta);
+        table.appendChild(head);
+        f.units
+          .sort(function (a, b) { return a.dataset.path < b.dataset.path ? -1 : 1; })
+          .forEach(function (u) { table.appendChild(u); });
+      });
+  }
 
   function cellValue(unit, column) {
     if (column === 'size') { return parseInt(unit.dataset.sizeBytes, 10) || 0; }
@@ -185,6 +247,16 @@
     var table = document.getElementById(tableId);
     if (!table) { return; }
     var units = Array.prototype.slice.call(table.querySelectorAll(':scope > tbody.orphan-unit'));
+    table.querySelectorAll(':scope > tbody.folder-head').forEach(function (h) { h.remove(); });
+    table.classList.toggle('folder-mode', state.column === 'folder');
+    document.querySelectorAll('.sort-mode').forEach(function (b) {
+      b.classList.toggle('active', (b.dataset.mode === 'folder') === (state.column === 'folder'));
+    });
+    if (state.column === 'folder') {
+      applyFolderGrouping(table, units);
+      table.querySelectorAll('th[data-sort]').forEach(function (th) { th.classList.remove('sort-asc', 'sort-desc'); });
+      return;
+    }
     units.sort(function (a, b) {
       var av = cellValue(a, state.column), bv = cellValue(b, state.column);
       var cmp = av < bv ? -1 : av > bv ? 1 : 0;
@@ -210,8 +282,20 @@
       state.dir = state.dir === 'asc' ? 'desc' : 'asc';
     } else {
       sortStates[tableId] = { column: column, dir: column === 'size' ? 'desc' : 'asc' };
+      if (tableId === 'review-table') {
+        try { localStorage.setItem('orphans-review-mode', 'flat'); } catch (e2) {}
+      }
     }
     applySort(tableId);
+  });
+
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest('.sort-mode');
+    if (!btn) { return; }
+    sortStates['review-table'] = btn.dataset.mode === 'folder'
+      ? { column: 'folder', dir: 'asc' } : { column: 'size', dir: 'desc' };
+    try { localStorage.setItem('orphans-review-mode', btn.dataset.mode); } catch (e2) {}
+    applySort('review-table');
   });
 
   document.addEventListener('click', function (e) {
