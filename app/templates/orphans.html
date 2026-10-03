@@ -167,7 +167,7 @@
   <section class="tab-panel" data-panel="review" role="tabpanel">
   <div class="needs-review">
     <h2>Needs Review</h2>
-    <p class="section-subtitle">Sonarr/Radarr + Plex don't confirm this file. Two likely explanations: it's a safe duplicate already tracked elsewhere, or it's real content that never got imported. Check each one before deleting — don't assume either way.</p>
+    <p class="section-subtitle">Not in your library: Sonarr, Radarr and Plex don't know about these files. Two likely explanations: it's a safe duplicate already tracked elsewhere, or it's real content that never got imported. Check each one before deleting — don't assume either way.</p>
     <form method="post" action="/orphans/delete" id="review-form">
       <div class="review-actions">
         <button type="submit" id="review-delete-btn" disabled>Delete selected</button>
@@ -438,7 +438,7 @@
     var bytes = 0;
     picked.forEach(function (cb) { bytes += parseInt(cb.closest('tbody.orphan-unit').dataset.sizeBytes, 10) || 0; });
     var msg = 'Delete ' + picked.length + (picked.length === 1 ? ' file' : ' files') + ' (' + formatGB(bytes) + ')' +
-      " that Sonarr/Radarr/Plex don't confirm?\n\nEach one is re-checked first, and anything that's no longer an orphan is skipped.";
+      "?\n\nNone of them are in your library (Sonarr, Radarr or Plex). Each one is re-checked first, and anything that has since shown up in the library is skipped.";
     if (!confirm(msg)) { e.preventDefault(); return; }
     e.target.textContent = 'Re-checking and deleting...';
   });
