@@ -65,6 +65,8 @@
     .tabs button.review-tab[aria-selected="true"] .tab-count { background: var(--warn-border); }
     .tab-panel { display: none; padding-top: 12px; } .tab-panel.active { display: block; }
     .tab-panel h2 { margin-top: 8px; }
+    .deleted-list { margin-top: 6px; } .deleted-list summary { cursor: pointer; }
+    .deleted-list ul { margin: 6px 0 0; padding-left: 20px; font-size: 13px; }
     .done-banner { background: #1f3326; color: #a6dcb3; padding: 10px 16px; margin-bottom: 16px; border-radius: 4px; }
     #review-delete-btn { padding: 8px 16px; background: var(--danger); color: white; border: none; border-radius: 4px; cursor: pointer; }
     #review-delete-btn:disabled { background: #4a4d54; color: var(--text-muted); cursor: default; }
@@ -127,7 +129,10 @@
 <h1>Orphan Trawler</h1>
 <p><a href="/">&larr; qBit Prunarr</a></p>
 {% if flash %}<div class="error-banner">{{ flash }}</div>{% endif %}
-{% if done %}<div class="done-banner">{{ done }}</div>{% endif %}
+{% if done %}<div class="done-banner">{{ done }}
+  {% if deleted_paths %}<details class="deleted-list"><summary>Show what was deleted</summary>
+    <ul>{% for p in deleted_paths %}<li>{{ p }}</li>{% endfor %}</ul></details>{% endif %}
+</div>{% endif %}
 <button id="scan-btn" hx-post="/orphans/scan" hx-target="#scan-results" hx-swap="outerHTML" hx-select="#scan-results"
         hx-indicator="#scan-spinner" hx-disabled-elt="this">
   Scan Now

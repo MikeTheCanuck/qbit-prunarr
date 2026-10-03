@@ -993,3 +993,29 @@ def test_page_has_sticky_delete_bar_and_folder_controls():
     html = TestClient(app).get("/orphans").text
     assert 'id="sticky-delete"' in html and 'id="sticky-delete-btn"' in html
     assert 'data-folders="expand"' in html and 'data-folders="collapse"' in html
+
+
+def test_bulk_delete_records_exactly_what_it_removed(tmp_path, monkeypatch):
+    """The banner lists the deleted paths, and every delete is appended to
+    AUDIT_LOG, so 'what did that delete actually remove?' always has an
+    answer, even after the container is recreated."""
+    import os
+    audit = tmp_path / "audit.log"
+    monkeypatch.setenv("AUDIT_LOG", str(audit))
+    path_a = os.path.join(str(tmp_path), "media", "movies", "Film", "old copy.avi")
+    _make_file(path_a, content=b"x" * 2000)
+
+    with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
+         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set(), get_all_queue_paths=set())), \
+         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set(), get_all_queue_paths=set())), \
+         patch("main.PlexClient", return_value=_mock_client(
+             get_all_movie_paths=set(), get_all_episode_paths=set()
+         )):
+        client = TestClient(app, follow_redirects=False)
+        client.post("/orphans/scan")
+        inodes = list(main._scan_cache.keys())
+        response = client.post("/orphans/delete", data={"inodes": [str(i) for i in inodes]})
+        page = client.get(response.headers["location"])
+
+    assert "media/movies/Film/old copy.avi" in page.text
+    assert "DELETED media/movies/Film/old copy.avi (2000 bytes)" in audit.read_text()

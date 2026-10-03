@@ -2,6 +2,7 @@
 import asyncio
 import hashlib
 import logging
+from datetime import datetime
 import os
 import time
 from html import escape
@@ -33,6 +34,15 @@ from sonarr import SonarrClient
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 logger = logging.getLogger("qbit-prunarr")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    logger.addHandler(_handler)
+    logger.propagate = False
+
+# Paths removed by the most recent bulk delete, shown under its banner.
+_last_bulk_deleted: list[str] = []
 
 BUCKETS = [
     ("180d+", 180, None),
@@ -493,7 +503,9 @@ def _split_by_category(candidates: list[dict]) -> tuple[list[dict], list[dict]]:
 async def orphans_page(request: Request, flash: Optional[str] = None, done: Optional[str] = None):
     try:
         return templates.TemplateResponse(
-            request, "orphans.html", {**_EMPTY_ORPHANS_CONTEXT, "error": None, "flash": flash, "done": done}
+            request, "orphans.html",
+            {**_EMPTY_ORPHANS_CONTEXT, "error": None, "flash": flash, "done": done,
+             "deleted_paths": list(_last_bulk_deleted) if done else []}
         )
     except Exception:
         return templates.TemplateResponse(
@@ -557,6 +569,24 @@ def _delete_candidate(data_root: str, candidate: OrphanCandidate) -> None:
     """
     for path in candidate.paths:
         delete_orphan(data_root, path, _boundary_for(path))
+        _audit(path, candidate.size_bytes)
+
+
+def _audit(path: str, size_bytes: int) -> None:
+    """Record every file this app deletes. Container logs vanish when the
+    container is recreated (every rebuild), so if AUDIT_LOG is set the same
+    line is also appended to that file, which should live on a mounted
+    volume to survive."""
+    line = f"DELETED {path} ({size_bytes} bytes)"
+    logger.info(line)
+    audit_path = os.environ.get("AUDIT_LOG")
+    if not audit_path:
+        return
+    try:
+        with open(audit_path, "a") as f:
+            f.write(f"{datetime.now().isoformat(timespec='seconds')} {line}\n")
+    except OSError as e:
+        logger.warning("could not write audit log %s: %s", audit_path, e)
 
 
 @app.delete("/orphans/{inode}")
@@ -704,6 +734,7 @@ async def bulk_delete_orphans(
         )
 
     data_root = _current_data_root()
+    _last_bulk_deleted.clear()
     failed = 0
     attempted = 0
     deleted = 0
@@ -718,6 +749,8 @@ async def bulk_delete_orphans(
         attempted += len(group.members)
         if not group_failed and not group_skipped:
             freed_bytes += group.size_bytes
+        if group_deleted:
+            _last_bulk_deleted.append(f"{group.root}/ ({group_deleted} files)")
         handled.update(m.inode for m in group.members)
 
     for inode in dict.fromkeys(inodes):
@@ -732,6 +765,7 @@ async def bulk_delete_orphans(
             _delete_candidate(data_root, candidate)
             deleted += 1
             freed_bytes += candidate.size_bytes
+            _last_bulk_deleted.extend(candidate.paths)
         except (OSError, ValueError) as e:
             failed += 1
             logger.warning("failed to delete orphan inode %s: %s", inode, e)
