@@ -18,6 +18,7 @@
       --accent-hover: #2f8ebf;
       --danger: #c8302a;
       --danger-hover: #a3241f;
+      --busy: #d9822b;
       --warn-bg: #332912;
       --warn-border: #a67c00;
       --warn-text: #e0b84d;
@@ -82,6 +83,10 @@
     /* In-flight delete: every delete re-scans first (~15s), so show it. */
     .deleting td { opacity: 0.55; }
     .deleting button { cursor: progress; }
+    /* In-flight deletes go orange: still happening, not yet done or failed,
+       and visibly different from the red "Delete" they started as. */
+    button.busy, button.busy:hover, button.busy:disabled { background: var(--busy) !important; color: #1f2126 !important;
+      cursor: progress; opacity: 1; }
     .deleted-row td { color: #8fd19e; background: #1f3326; transition: opacity 0.6s; }
     .deleted-row.fading td { opacity: 0; }
     details.service-status { margin: 12px 0 0; color: var(--text-muted); }
@@ -440,7 +445,17 @@
     var msg = 'Delete ' + picked.length + (picked.length === 1 ? ' file' : ' files') + ' (' + formatGB(bytes) + ')' +
       "?\n\nNone of them are in your library (Sonarr, Radarr or Plex). Each one is re-checked first, and anything that has since shown up in the library is skipped.";
     if (!confirm(msg)) { e.preventDefault(); return; }
-    e.target.textContent = 'Re-checking and deleting...';
+  });
+
+  // Both bulk forms do a full page post that takes ~15s or more (re-scan,
+  // then delete), so mark the button busy as the form actually submits.
+  document.addEventListener('submit', function (e) {
+    var btn = e.submitter;
+    if (!btn || (btn.id !== 'bulk-delete-btn' && btn.id !== 'review-delete-btn')) { return; }
+    btn.textContent = 'Re-checking and deleting...';
+    btn.classList.add('busy');
+    // Disable after the submit has been dispatched, so it can't be sent twice.
+    setTimeout(function () { btn.disabled = true; }, 0);
   });
 
   document.addEventListener('htmx:beforeRequest', function (e) {
@@ -449,6 +464,7 @@
     var unit = btn.closest('tbody.orphan-group') || btn.closest('tr');
     if (unit) { unit.classList.add('deleting'); }
     btn.textContent = 'Re-checking...';
+    btn.classList.add('busy');
     btn.title = 'Re-scanning to confirm it is still an orphan before deleting (about 15 seconds)';
   });
 
