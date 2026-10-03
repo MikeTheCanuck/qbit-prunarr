@@ -987,3 +987,9 @@ def test_bulk_delete_success_says_what_it_did(tmp_path):
     assert "done=" in response.headers["location"]
     assert "Deleted 1 file" in page.text
     assert 'class="done-banner"' in page.text
+
+
+def test_page_has_sticky_delete_bar_and_folder_controls():
+    html = TestClient(app).get("/orphans").text
+    assert 'id="sticky-delete"' in html and 'id="sticky-delete-btn"' in html
+    assert 'data-folders="expand"' in html and 'data-folders="collapse"' in html

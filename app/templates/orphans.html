@@ -73,6 +73,19 @@
     tbody.folder-head td:first-child { width: 1%; }
     .superseded { display: inline-block; margin-left: 8px; font-size: 12px; padding: 1px 8px; border-radius: 10px;
       background: #1f3326; color: #a6dcb3; border: 1px solid #2f5a3c; white-space: nowrap; }
+    .folder-hidden { display: none; }
+    .folder-toggle { background: none; border: none; color: var(--warn-text); cursor: pointer; padding: 0 8px 0 0; font-size: 1em; }
+    tbody.folder-head.expanded .group-chevron { transform: rotate(90deg); }
+    .review-actions .folder-all { margin: 0; }
+    .review-actions:has(+ #review-table:not(.folder-mode)) .folder-all { display: none; }
+    #sticky-delete { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 20;
+      display: flex; align-items: center; gap: 14px; padding: 10px 14px; border-radius: 10px;
+      background: #2c2f36; border: 2px solid var(--danger); box-shadow: 0 0 0 4px rgba(200,48,42,.18), 0 10px 30px rgba(0,0,0,.45);
+      color: var(--text); font-weight: 600; max-width: calc(100vw - 32px); }
+    #sticky-delete[hidden] { display: none; }
+    #sticky-delete-btn { padding: 8px 16px; background: var(--danger); color: #fff; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; }
+    #sticky-delete-btn:hover { background: var(--danger-hover); }
+    body { padding-bottom: 90px; }
     .not-scanned { color: var(--text-muted); margin: 14px 0 0; }
     .sort-modes { color: var(--warn-text); margin: 0 0 8px; }
     .sort-mode { font: inherit; font-size: 13px; background: var(--panel-bg); color: var(--text-muted); border: 1px solid var(--border);
@@ -181,6 +194,8 @@
         <p class="sort-modes">Show:
           <button type="button" class="sort-mode" data-mode="folder">Grouped by folder</button>
           <button type="button" class="sort-mode" data-mode="flat">Flat list</button></p>
+        <p class="folder-all"><button type="button" class="sort-mode" data-folders="expand">Expand all</button>
+          <button type="button" class="sort-mode" data-folders="collapse">Collapse all</button></p>
       </div>
       <table id="review-table">
         <thead>
@@ -200,6 +215,11 @@
     </form>
   </div>
   </section>
+</div>
+
+<div id="sticky-delete" hidden>
+  <span id="sticky-summary"></span>
+  <button type="button" id="sticky-delete-btn">Delete selected</button>
 </div>
 
 <script>
@@ -254,18 +274,48 @@
         cbCell.appendChild(folderCb);
         var cell = row.insertCell();
         cell.colSpan = cols - 1;
-        cell.textContent = (dir || '(top level)') + '/';
+        var toggle = document.createElement('button');
+        toggle.type = 'button';
+        toggle.className = 'folder-toggle';
+        toggle.innerHTML = '<span class="group-chevron">&#9654;</span>';
+        cell.appendChild(toggle);
+        cell.appendChild(document.createTextNode((dir || '(top level)') + '/'));
+        var superseded = f.units.filter(function (u) { return u.querySelector('.superseded'); }).length;
         var meta = document.createElement('span');
         meta.className = 'folder-meta';
-        meta.textContent = f.units.length + (f.units.length === 1 ? ' file, ' : ' files, ') + formatGB(f.bytes);
+        meta.textContent = f.units.length + (f.units.length === 1 ? ' file · ' : ' files · ') + formatGB(f.bytes) +
+          (superseded ? ' · ' + superseded + ' superseded' : '');
         cell.appendChild(meta);
         f.units.forEach(function (u) { u.dataset.folder = dir; });
+        setFolderOpen(table, head, f.units, openFolders().has(dir));
         table.appendChild(head);
         f.units
           .sort(function (a, b) { return a.dataset.path < b.dataset.path ? -1 : 1; })
           .forEach(function (u) { table.appendChild(u); });
         refreshFolderState(table, dir);
       });
+  }
+
+  // Which folders are expanded, by path, so a rescan or reload keeps them.
+  // Folders start collapsed: one line each until you open them.
+  var OPEN_KEY = 'orphans-review-open';
+  function openFolders() {
+    try { return new Set(JSON.parse(localStorage.getItem(OPEN_KEY)) || []); } catch (e) { return new Set(); }
+  }
+  function saveOpenFolders(set) {
+    try { localStorage.setItem(OPEN_KEY, JSON.stringify(Array.from(set))); } catch (e) {}
+  }
+  function setFolderOpen(table, head, units, open) {
+    head.classList.toggle('expanded', open);
+    units.forEach(function (u) { u.classList.toggle('folder-hidden', !open); });
+  }
+  function toggleFolder(head, open) {
+    var table = head.closest('table');
+    var dir = head.dataset.folder;
+    setFolderOpen(table, head, folderUnits(table, dir), open);
+    var set = openFolders();
+    if (open) { set.add(dir); } else { set.delete(dir); }
+    saveOpenFolders(set);
   }
 
   function folderUnits(table, dir) {
@@ -304,6 +354,7 @@
     if (!table) { return; }
     var units = Array.prototype.slice.call(table.querySelectorAll(':scope > tbody.orphan-unit'));
     table.querySelectorAll(':scope > tbody.folder-head').forEach(function (h) { h.remove(); });
+    units.forEach(function (u) { u.classList.remove('folder-hidden'); });
     table.classList.toggle('folder-mode', state.column === 'folder');
     document.querySelectorAll('.sort-mode').forEach(function (b) {
       b.classList.toggle('active', (b.dataset.mode === 'folder') === (state.column === 'folder'));
@@ -343,6 +394,19 @@
       }
     }
     applySort(tableId);
+  });
+
+  document.addEventListener('click', function (e) {
+    var t = e.target.closest('.folder-toggle');
+    if (t) {
+      var head = t.closest('tbody.folder-head');
+      toggleFolder(head, !head.classList.contains('expanded'));
+      return;
+    }
+    var all = e.target.closest('[data-folders]');
+    if (!all) { return; }
+    var open = all.dataset.folders === 'expand';
+    document.querySelectorAll('#review-table > tbody.folder-head').forEach(function (h) { toggleFolder(h, open); });
   });
 
   document.addEventListener('click', function (e) {
@@ -437,6 +501,36 @@
   document.addEventListener('htmx:afterSwap', refreshBulkButton);
   document.addEventListener('htmx:afterSwap', refreshReviewButton);
 
+  // Sticky bar: the top "Delete selected" scrolls away, so whenever the
+  // visible tab has a selection, show its count and size at the bottom.
+  // Its button just clicks the tab's real one, so the same confirm and
+  // busy handling apply. Group headers are skipped when counting: their
+  // children are ticked in lockstep and carry the sizes.
+  function activeTableId() {
+    var active = document.querySelector('.tab-panel.active');
+    if (!active) { return null; }
+    return active.dataset.panel === 'review' ? 'review-table' : 'download-table';
+  }
+  function refreshSticky() {
+    var bar = document.getElementById('sticky-delete');
+    var id = activeTableId();
+    var picked = id ? Array.prototype.filter.call(
+      document.querySelectorAll('#' + id + ' .orphan-cb:checked'),
+      function (cb) { return !cb.closest('tr.group-header'); }) : [];
+    if (!picked.length) { bar.hidden = true; return; }
+    var bytes = 0;
+    picked.forEach(function (cb) { bytes += parseInt(cb.closest('tr').dataset.sizeBytes, 10) || 0; });
+    document.getElementById('sticky-summary').textContent =
+      picked.length + (picked.length === 1 ? ' file' : ' files') + ' selected · ' + formatGB(bytes);
+    bar.hidden = false;
+  }
+  document.addEventListener('change', refreshSticky);
+  document.addEventListener('htmx:afterSwap', refreshSticky);
+  document.getElementById('sticky-delete-btn').addEventListener('click', function () {
+    var real = document.getElementById(activeTableId() === 'review-table' ? 'review-delete-btn' : 'bulk-delete-btn');
+    if (real && !real.disabled) { real.click(); }
+  });
+
   // Needs Review is the ambiguous category, so the confirm says so and
   // names exactly how much is about to go.
   document.addEventListener('click', function (e) {
@@ -456,6 +550,9 @@
     if (!btn || (btn.id !== 'bulk-delete-btn' && btn.id !== 'review-delete-btn')) { return; }
     btn.textContent = 'Re-checking and deleting...';
     btn.classList.add('busy');
+    var sticky = document.getElementById('sticky-delete-btn');
+    sticky.textContent = 'Re-checking and deleting...';
+    sticky.classList.add('busy');
     // Disable after the submit has been dispatched, so it can't be sent twice.
     setTimeout(function () { btn.disabled = true; }, 0);
   });
@@ -505,7 +602,7 @@
   }
   document.addEventListener('click', function (e) {
     var tab = e.target.closest('.tabs [data-tab]');
-    if (tab) { showTab(tab.dataset.tab); }
+    if (tab) { showTab(tab.dataset.tab); refreshSticky(); }
   });
   document.addEventListener('htmx:afterSwap', function () { showTab(currentTab()); });
   showTab(currentTab());
