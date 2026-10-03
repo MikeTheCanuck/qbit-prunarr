@@ -451,3 +451,32 @@ def test_prune_empty_tree_refuses_root_outside_boundary(tmp_path):
         prune_empty_tree(root, "media/movies/empty", "torrents")
 
     assert os.path.isdir(os.path.join(root, "media", "movies", "empty"))
+
+
+def test_mark_superseded_flags_an_old_copy_beside_radarrs_file():
+    from orphans import OrphanCandidate, mark_superseded
+    folder = "media/movies/Return of the Living Dead II 1080p WEBRip"
+    old = OrphanCandidate(inode=1, paths=[f"{folder}/ROTLD II WEBRip.mp4"], category="orphaned media", size_bytes=1)
+    mark_superseded([old], {f"{folder}/ROTLD II (1988) Bluray-1080p.mp4"}, {"media/tv"})
+    assert old.superseded_by == "ROTLD II (1988) Bluray-1080p.mp4"
+
+
+def test_mark_superseded_leaves_radarrs_own_file_alone():
+    """Radarr's tracked file can land in Needs Review when Plex doesn't know
+    it yet. It's the current copy, never a superseded one."""
+    from orphans import OrphanCandidate, mark_superseded
+    tracked = "media/movies/Film (2001)/Film (2001).mp4"
+    c = OrphanCandidate(inode=1, paths=[tracked], category="orphaned media", size_bytes=1)
+    mark_superseded([c], {tracked}, {"media/tv"})
+    assert c.superseded_by is None
+
+
+def test_mark_superseded_ignores_tv_and_other_folders_and_unknown_radarr():
+    from orphans import OrphanCandidate, mark_superseded
+    tv = OrphanCandidate(inode=1, paths=["media/tv/Show/S01/extra.mkv"], category="orphaned media", size_bytes=1)
+    lone = OrphanCandidate(inode=2, paths=["media/movies/Other/old.avi"], category="orphaned media", size_bytes=1)
+    radarr = {"media/tv/Show/S01/ep.mkv", "media/movies/Film/Film.mp4"}
+    mark_superseded([tv, lone], radarr, {"media/tv"})
+    assert tv.superseded_by is None and lone.superseded_by is None
+    mark_superseded([lone], None, {"media/tv"})  # Radarr unreachable: no labels, no crash
+    assert lone.superseded_by is None

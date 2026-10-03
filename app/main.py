@@ -20,6 +20,7 @@ from orphans import (
     classify_media_orphans,
     delete_orphan,
     is_tv_path,
+    mark_superseded,
     path_tracked,
     prune_empty_tree,
 )
@@ -353,6 +354,7 @@ def run_scan() -> tuple[list[OrphanCandidate], dict[str, str]]:
     candidates += classify_media_orphans(
         result, data_root, TV_SUBDIRS, sonarr_paths, radarr_paths, plex_episode_paths, plex_movie_paths
     )
+    mark_superseded(candidates, radarr_paths, TV_SUBDIRS)
 
     _scan_cache.clear()
     for c in candidates:
@@ -411,6 +413,7 @@ def _enrich_candidate(c: OrphanCandidate) -> dict:
         "category": c.category,
         "size_gb": _format_gb(c.size_bytes),
         "size_bytes": c.size_bytes,
+        "superseded_by": c.superseded_by,
     }
 
 

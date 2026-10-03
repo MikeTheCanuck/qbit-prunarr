@@ -16,6 +16,9 @@ class OrphanCandidate:
     paths: list[str]
     category: str
     size_bytes: int
+    # Set when Radarr tracks a different file in this same movie folder:
+    # this one is very likely an older copy the newer import left behind.
+    superseded_by: str | None = None
 
 
 def _file_size(data_root: str, paths: list[str]) -> int:
@@ -255,3 +258,34 @@ def prune_empty_tree(data_root: str, root_rel: str, boundary: str) -> None:
         except OSError:
             break
         parent = os.path.dirname(parent)
+
+
+def mark_superseded(
+    candidates: list[OrphanCandidate], radarr_paths: set[str] | None, tv_subdirs: set[str]
+) -> None:
+    """Flag movie-side review candidates that share a folder with the file
+    Radarr actually tracks for that movie.
+
+    Radarr only cleans up files it imported itself, so an older full copy
+    (a WEBRip from years ago, a multi-CD rip) survives next to a newer
+    import. A candidate that IS Radarr's tracked file (here only because
+    Plex doesn't know it) is never marked; neither is anything in a TV
+    folder, where an untracked file is more likely an extra than a copy.
+    """
+    if radarr_paths is None:
+        return
+    tracked_in_dir: dict[str, str] = {}
+    for p in radarr_paths:
+        tracked_in_dir[os.path.dirname(p)] = os.path.basename(p)
+    for c in candidates:
+        if c.category != "orphaned media":
+            continue
+        if any(is_tv_path(p, tv_subdirs) for p in c.paths):
+            continue
+        if any(p in radarr_paths for p in c.paths):
+            continue
+        for p in c.paths:
+            tracked = tracked_in_dir.get(os.path.dirname(p))
+            if tracked:
+                c.superseded_by = tracked
+                break
