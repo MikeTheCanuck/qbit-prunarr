@@ -578,7 +578,14 @@ async def delete_single_orphan(inode: int):
 
     try:
         _delete_candidate(_current_data_root(), fresh)
-        return Response(status_code=200, content="")
+        # A brief confirmation row instead of an empty swap, so the delete
+        # visibly lands; the page fades it out after a few seconds.
+        return Response(
+            status_code=200,
+            media_type="text/html",
+            content=f'<tr id="orphan-row-{inode}" class="deleted-row"><td colspan="4">'
+                    f'Deleted {escape(fresh.paths[0])} ({_format_gb(fresh.size_bytes)} GB freed)</td></tr>',
+        )
     except (OSError, ValueError) as e:
         return Response(
             status_code=200,
@@ -626,12 +633,14 @@ def _delete_group(
     return deleted, failed, skipped
 
 
-def _group_message(dom_id: str, message: str, error: bool = False) -> Response:
+def _group_message(dom_id: str, message: str, error: bool = False, done: bool = False) -> Response:
     style = ' style="color:red"' if error else ""
+    # "deleted-row" tells the page to fade the confirmation out after a moment.
+    cls = ' class="deleted-row"' if done else ""
     return Response(
         status_code=200,
         media_type="text/html",
-        content=f'<tbody id="{dom_id}"><tr><td colspan="4"{style}>{escape(message)}</td></tr></tbody>',
+        content=f'<tbody id="{dom_id}"{cls}><tr><td colspan="4"{style}>{escape(message)}</td></tr></tbody>',
     )
 
 
@@ -662,7 +671,9 @@ async def delete_orphan_group(root: str = Form(...)):
         return _group_message(dom_id, f"{failed} of {total} deletes failed — check logs", error=True)
     if skipped:
         return _group_message(dom_id, f"Deleted {deleted}; {skipped} no longer orphans — skipped")
-    return Response(status_code=200, content="")
+    return _group_message(
+        dom_id, f"Deleted {group.root}/ ({deleted} files, {_format_gb(group.size_bytes)} GB freed)", done=True
+    )
 
 
 @app.post("/orphans/delete")

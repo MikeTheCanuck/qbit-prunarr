@@ -73,6 +73,11 @@
       border-top: 2px solid var(--warn-border); }
     tbody.folder-head .folder-meta { color: var(--text-muted); font-weight: 400; margin-left: 8px; }
     #review-table.folder-mode tbody.orphan-unit td:nth-child(2) { padding-left: 28px; }
+    /* In-flight delete: every delete re-scans first (~15s), so show it. */
+    .deleting td { opacity: 0.55; }
+    .deleting button { cursor: progress; }
+    .deleted-row td { color: #8fd19e; background: #1f3326; transition: opacity 0.6s; }
+    .deleted-row.fading td { opacity: 0; }
     details.service-status { margin: 12px 0 0; color: var(--text-muted); }
     details.service-status summary { cursor: pointer; }
     .needs-review {
@@ -324,6 +329,18 @@
     btn.disabled = !document.querySelector('#download-table .orphan-cb:checked');
   }
 
+  // A group header shows "some selected" (indeterminate) when only part
+  // of its group is ticked. The header stays unchecked in that state, so
+  // the server gets just the ticked children, never the whole group.
+  function refreshHeaderState(group) {
+    var headerCb = group.querySelector('tr.group-header .orphan-cb');
+    if (!headerCb) { return; }
+    var childCbs = Array.prototype.slice.call(group.querySelectorAll('tr.group-child .orphan-cb'));
+    var checked = childCbs.filter(function (c) { return c.checked; }).length;
+    headerCb.checked = checked > 0 && checked === childCbs.length;
+    headerCb.indeterminate = checked > 0 && checked < childCbs.length;
+  }
+
   function syncGroupCheckbox(cb) {
     var row = cb.closest('tr');
     var group = cb.closest('tbody.orphan-group');
@@ -333,23 +350,15 @@
       group.querySelectorAll('tr.group-child .orphan-cb').forEach(function (childCb) {
         childCb.checked = cb.checked;
       });
-    } else if (row.classList.contains('group-child')) {
-      var headerCb = group.querySelector('tr.group-header .orphan-cb');
-      if (!headerCb) { return; }
-      if (!cb.checked) {
-        headerCb.checked = false;
-      } else {
-        var childCbs = group.querySelectorAll('tr.group-child .orphan-cb');
-        var allChecked = Array.prototype.every.call(childCbs, function (c) { return c.checked; });
-        if (allChecked) { headerCb.checked = true; }
-      }
     }
+    refreshHeaderState(group);
   }
 
   document.addEventListener('change', function (e) {
     if (e.target.id === 'select-all-download') {
       document.querySelectorAll('#download-table .orphan-cb').forEach(function (cb) {
         cb.checked = e.target.checked;
+        cb.indeterminate = false;
       });
     } else if (e.target.classList && e.target.classList.contains('orphan-cb')) {
       syncGroupCheckbox(e.target);
@@ -358,6 +367,23 @@
   });
 
   document.addEventListener('htmx:afterSwap', refreshBulkButton);
+
+  document.addEventListener('htmx:beforeRequest', function (e) {
+    var btn = e.detail.elt;
+    if (!btn.matches || !btn.matches('button[hx-delete], button.group-delete')) { return; }
+    var unit = btn.closest('tbody.orphan-group') || btn.closest('tr');
+    if (unit) { unit.classList.add('deleting'); }
+    btn.textContent = 'Re-checking...';
+    btn.title = 'Re-scanning to confirm it is still an orphan before deleting (about 15 seconds)';
+  });
+
+  // Confirmations fade out after a few seconds; errors stay put.
+  document.addEventListener('htmx:afterSwap', function () {
+    document.querySelectorAll('.deleted-row:not(.fading)').forEach(function (el) {
+      setTimeout(function () { el.classList.add('fading'); }, 3000);
+      setTimeout(function () { el.remove(); }, 3700);
+    });
+  });
 
   document.addEventListener('htmx:afterSwap', function () {
     applySort('download-table');

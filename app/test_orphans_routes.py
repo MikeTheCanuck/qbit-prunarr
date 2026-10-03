@@ -596,7 +596,7 @@ def test_group_delete_removes_every_file_and_the_emptied_tree(tmp_path):
         response = client.post("/orphans/groups/delete", data={"root": BLUEBIRD})
 
     assert response.status_code == 200
-    assert response.text == ""
+    assert 'class="deleted-row"' in response.text and "Deleted" in response.text
     assert not os.path.exists(os.path.join(root, *BLUEBIRD.split("/")))  # incl. empty AUXDATA/
     assert os.path.exists(os.path.join(root, *OTHER_MOVIE.split("/"), "movie.mkv"))
 
