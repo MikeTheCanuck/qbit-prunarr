@@ -80,12 +80,17 @@
     .review-actions:has(+ #review-table:not(.folder-mode)) .folder-all { display: none; }
     #sticky-delete { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 20;
       display: flex; align-items: center; gap: 14px; padding: 10px 14px; border-radius: 10px;
-      background: #2c2f36; border: 2px solid var(--danger); box-shadow: 0 0 0 4px rgba(200,48,42,.18), 0 10px 30px rgba(0,0,0,.45);
+      background: #3a2224; border: 2px solid var(--danger); box-shadow: 0 0 0 5px rgba(200,48,42,.28), 0 12px 34px rgba(0,0,0,.6);
+      animation: sticky-in .25s ease-out;
       color: var(--text); font-weight: 600; max-width: calc(100vw - 32px); }
     #sticky-delete[hidden] { display: none; }
+    @keyframes sticky-in { from { transform: translate(-50%, 24px); opacity: 0; } to { transform: translate(-50%, 0); opacity: 1; } }
     #sticky-delete-btn { padding: 8px 16px; background: var(--danger); color: #fff; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; }
     #sticky-delete-btn:hover { background: var(--danger-hover); }
     body { padding-bottom: 90px; }
+    .tracks-sample { display: inline-block; margin-left: 8px; font-size: 12px; padding: 1px 8px; border-radius: 10px;
+      background: var(--warn-bg); color: var(--warn-text); border: 1px solid var(--warn-border); white-space: nowrap; }
+    tbody.folder-head .superseded, tbody.folder-head .tracks-sample { font-weight: 600; }
     .not-scanned { color: var(--text-muted); margin: 14px 0 0; }
     .sort-modes { color: var(--warn-text); margin: 0 0 8px; }
     .sort-mode { font: inherit; font-size: 13px; background: var(--panel-bg); color: var(--text-muted); border: 1px solid var(--border);
@@ -241,6 +246,15 @@
     if (savedMode === 'flat') { sortStates['review-table'] = { column: 'size', dir: 'desc' }; }
   } catch (e) {}
 
+  // Group by the movie or show folder (media/<library>/<Title>), not the
+  // immediate parent: a show's extras spread across Season and Featurette
+  // subfolders belong to one decision.
+  function titleFolder(path) {
+    var parts = path.split('/');
+    if (parts.length > 3 && parts[0] === 'media') { return parts.slice(0, 3).join('/'); }
+    return parentDir(path);
+  }
+
   function parentDir(path) {
     var i = path.lastIndexOf('/');
     return i > 0 ? path.slice(0, i) : '';
@@ -253,7 +267,7 @@
   function applyFolderGrouping(table, units) {
     var folders = {};
     units.forEach(function (u) {
-      var dir = parentDir(u.dataset.path || '');
+      var dir = titleFolder(u.dataset.path || '');
       (folders[dir] = folders[dir] || { units: [], bytes: 0 }).units.push(u);
       folders[dir].bytes += parseInt(u.dataset.sizeBytes, 10) || 0;
     });
@@ -280,12 +294,24 @@
         toggle.innerHTML = '<span class="group-chevron">&#9654;</span>';
         cell.appendChild(toggle);
         cell.appendChild(document.createTextNode((dir || '(top level)') + '/'));
-        var superseded = f.units.filter(function (u) { return u.querySelector('.superseded'); }).length;
         var meta = document.createElement('span');
         meta.className = 'folder-meta';
-        meta.textContent = f.units.length + (f.units.length === 1 ? ' file · ' : ' files · ') + formatGB(f.bytes) +
-          (superseded ? ' · ' + superseded + ' superseded' : '');
+        meta.textContent = f.units.length + (f.units.length === 1 ? ' file · ' : ' files · ') + formatGB(f.bytes);
         cell.appendChild(meta);
+        // Same badges as the rows, so a collapsed folder still shows them.
+        var superseded = f.units.filter(function (u) { return u.querySelector('.superseded'); }).length;
+        if (superseded) {
+          var sb = document.createElement('span');
+          sb.className = 'superseded';
+          sb.textContent = superseded === f.units.length ? 'All superseded' : superseded + ' superseded';
+          cell.appendChild(sb);
+        }
+        if (f.units.some(function (u) { return u.querySelector('.tracks-sample'); })) {
+          var tb = document.createElement('span');
+          tb.className = 'tracks-sample';
+          tb.textContent = 'Radarr is tracking a sample';
+          cell.appendChild(tb);
+        }
         f.units.forEach(function (u) { u.dataset.folder = dir; });
         setFolderOpen(table, head, f.units, openFolders().has(dir));
         table.appendChild(head);

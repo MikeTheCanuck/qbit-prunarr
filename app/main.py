@@ -414,6 +414,7 @@ def _enrich_candidate(c: OrphanCandidate) -> dict:
         "size_gb": _format_gb(c.size_bytes),
         "size_bytes": c.size_bytes,
         "superseded_by": c.superseded_by,
+        "tracks_sample": c.tracks_sample,
     }
 
 

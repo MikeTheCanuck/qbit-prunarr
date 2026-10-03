@@ -480,3 +480,23 @@ def test_mark_superseded_ignores_tv_and_other_folders_and_unknown_radarr():
     assert tv.superseded_by is None and lone.superseded_by is None
     mark_superseded([lone], None, {"media/tv"})  # Radarr unreachable: no labels, no crash
     assert lone.superseded_by is None
+
+
+def test_real_movie_is_never_superseded_by_a_tracked_sample():
+    """Iron Man 3 on the live NAS: Radarr's movieFile is the sample clip in
+    a subfolder, so the untracked 11.5GB mkv is the real movie."""
+    from orphans import OrphanCandidate, mark_superseded
+    folder = "media/movies/Iron Man 3 2013 BluRay 1080p DTS AC3 x264-MgB"
+    real = OrphanCandidate(inode=1, paths=[f"{folder}/Iron Man 3 2013 BluRay 1080p DTS AC3 x264-MgB.mkv"],
+                           category="orphaned media", size_bytes=1)
+    mark_superseded([real], {f"{folder}/Sample,Screens/Iron Man 3 (Sample).mkv"}, {"media/tv"})
+    assert real.superseded_by is None
+    assert real.tracks_sample is True
+
+
+def test_sample_in_the_same_folder_still_never_supersedes():
+    from orphans import OrphanCandidate, mark_superseded
+    folder = "media/movies/Film"
+    real = OrphanCandidate(inode=1, paths=[f"{folder}/Film.mkv"], category="orphaned media", size_bytes=1)
+    mark_superseded([real], {f"{folder}/Film-sample.mkv"}, {"media/tv"})
+    assert real.superseded_by is None and real.tracks_sample is True

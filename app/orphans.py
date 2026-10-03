@@ -19,6 +19,9 @@ class OrphanCandidate:
     # Set when Radarr tracks a different file in this same movie folder:
     # this one is very likely an older copy the newer import left behind.
     superseded_by: str | None = None
+    # Radarr's tracked file for this movie is a sample clip, so this
+    # untracked file is likely the real movie Radarr missed.
+    tracks_sample: bool = False
 
 
 def _file_size(data_root: str, paths: list[str]) -> int:
@@ -260,6 +263,17 @@ def prune_empty_tree(data_root: str, root_rel: str, boundary: str) -> None:
         parent = os.path.dirname(parent)
 
 
+def _title_folder(path: str) -> str:
+    """media/movies/<Title>/... -> media/movies/<Title>. The movie (or show)
+    folder is what a file belongs to, however deep it sits inside."""
+    parts = path.split("/")
+    return "/".join(parts[:3]) if len(parts) > 3 and parts[0] == "media" else os.path.dirname(path)
+
+
+def _is_sample(path: str) -> bool:
+    return "sample" in path.lower()
+
+
 def mark_superseded(
     candidates: list[OrphanCandidate], radarr_paths: set[str] | None, tv_subdirs: set[str]
 ) -> None:
@@ -271,18 +285,29 @@ def mark_superseded(
     import. A candidate that IS Radarr's tracked file (here only because
     Plex doesn't know it) is never marked; neither is anything in a TV
     folder, where an untracked file is more likely an extra than a copy.
+
+    When Radarr's tracked file for the movie is a sample clip, the
+    candidate is probably the real movie, so it gets `tracks_sample`
+    instead. Never call the real movie "superseded" by its own sample.
     """
     if radarr_paths is None:
         return
     tracked_in_dir: dict[str, str] = {}
+    tracked_samples_in_title: set[str] = set()
     for p in radarr_paths:
         tracked_in_dir[os.path.dirname(p)] = os.path.basename(p)
+        if _is_sample(p):
+            tracked_samples_in_title.add(_title_folder(p))
     for c in candidates:
         if c.category != "orphaned media":
             continue
         if any(is_tv_path(p, tv_subdirs) for p in c.paths):
             continue
         if any(p in radarr_paths for p in c.paths):
+            continue
+        if any(_title_folder(p) in tracked_samples_in_title for p in c.paths):
+            if not any(_is_sample(p) for p in c.paths):
+                c.tracks_sample = True
             continue
         for p in c.paths:
             tracked = tracked_in_dir.get(os.path.dirname(p))
