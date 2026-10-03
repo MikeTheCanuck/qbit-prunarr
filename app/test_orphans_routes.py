@@ -949,3 +949,41 @@ def test_tabs_show_no_counts_before_a_scan():
 def test_needs_review_offers_folder_grouping():
     response = TestClient(app).get("/orphans")
     assert 'data-mode="folder"' in response.text and 'data-mode="flat"' in response.text
+
+
+def test_review_form_has_its_own_bulk_delete_button(tmp_path):
+    """Needs Review gets a submit inside its own form, so its checkboxes do
+    something - and still can't post anything from the download table."""
+    with _services():
+        response = TestClient(app).post("/orphans/scan")
+
+    start = response.text.index('id="review-form"')
+    form = response.text[start:response.text.index("</form>", start)]
+    assert 'id="review-delete-btn"' in form
+    assert 'type="submit"' in form
+    assert 'id="bulk-delete-btn"' not in form
+
+
+def test_bulk_delete_success_says_what_it_did(tmp_path):
+    """A clean bulk delete redirects to an unscanned page, so it has to
+    report the count and space freed or it looks like nothing happened."""
+    import os
+    path_a = os.path.join(str(tmp_path), "media", "movies", "a.mkv")
+    _make_file(path_a, content=b"x" * 2000)
+
+    with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
+         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set(), get_all_queue_paths=set())), \
+         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set(), get_all_queue_paths=set())), \
+         patch("main.PlexClient", return_value=_mock_client(
+             get_all_movie_paths=set(), get_all_episode_paths=set()
+         )):
+        client = TestClient(app, follow_redirects=False)
+        client.post("/orphans/scan")
+        inodes = list(main._scan_cache.keys())
+        response = client.post("/orphans/delete", data={"inodes": [str(i) for i in inodes]})
+        page = client.get(response.headers["location"])
+
+    assert not os.path.exists(path_a)
+    assert "done=" in response.headers["location"]
+    assert "Deleted 1 file" in page.text
+    assert 'class="done-banner"' in page.text

@@ -486,10 +486,10 @@ def _split_by_category(candidates: list[dict]) -> tuple[list[dict], list[dict]]:
 
 
 @app.get("/orphans", response_class=HTMLResponse)
-async def orphans_page(request: Request, flash: Optional[str] = None):
+async def orphans_page(request: Request, flash: Optional[str] = None, done: Optional[str] = None):
     try:
         return templates.TemplateResponse(
-            request, "orphans.html", {**_EMPTY_ORPHANS_CONTEXT, "error": None, "flash": flash}
+            request, "orphans.html", {**_EMPTY_ORPHANS_CONTEXT, "error": None, "flash": flash, "done": done}
         )
     except Exception:
         return templates.TemplateResponse(
@@ -702,11 +702,18 @@ async def bulk_delete_orphans(
     data_root = _current_data_root()
     failed = 0
     attempted = 0
+    deleted = 0
+    skipped = 0
+    freed_bytes = 0
     handled: set[int] = set()
     for group in groups:
-        _, group_failed, _ = _delete_group(data_root, group, fresh_candidates)
+        group_deleted, group_failed, group_skipped = _delete_group(data_root, group, fresh_candidates)
         failed += group_failed
+        deleted += group_deleted
+        skipped += group_skipped
         attempted += len(group.members)
+        if not group_failed and not group_skipped:
+            freed_bytes += group.size_bytes
         handled.update(m.inode for m in group.members)
 
     for inode in dict.fromkeys(inodes):
@@ -715,9 +722,12 @@ async def bulk_delete_orphans(
         attempted += 1
         candidate = fresh_by_inode.get(inode)
         if candidate is None:
+            skipped += 1
             continue
         try:
             _delete_candidate(data_root, candidate)
+            deleted += 1
+            freed_bytes += candidate.size_bytes
         except (OSError, ValueError) as e:
             failed += 1
             logger.warning("failed to delete orphan inode %s: %s", inode, e)
@@ -735,4 +745,10 @@ async def bulk_delete_orphans(
             url=f"/orphans?flash={quote('; '.join(messages))}", status_code=302
         )
 
-    return RedirectResponse(url="/orphans", status_code=302)
+    # Success still needs saying: the redirect lands on an unscanned page,
+    # which otherwise looks the same whether anything was deleted or not.
+    done = f"Deleted {deleted} {'file' if deleted == 1 else 'files'} ({_format_gb(freed_bytes)} GB freed)."
+    if skipped:
+        done += f" {skipped} skipped: no longer orphans."
+    done += " Scan again to see what's left."
+    return RedirectResponse(url=f"/orphans?done={quote(done)}", status_code=302)

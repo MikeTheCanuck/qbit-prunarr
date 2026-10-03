@@ -64,6 +64,12 @@
     .tabs button.review-tab[aria-selected="true"] .tab-count { background: var(--warn-border); }
     .tab-panel { display: none; padding-top: 12px; } .tab-panel.active { display: block; }
     .tab-panel h2 { margin-top: 8px; }
+    .done-banner { background: #1f3326; color: #a6dcb3; padding: 10px 16px; margin-bottom: 16px; border-radius: 4px; }
+    #review-delete-btn { padding: 8px 16px; background: var(--danger); color: white; border: none; border-radius: 4px; cursor: pointer; }
+    #review-delete-btn:disabled { background: #4a4d54; color: var(--text-muted); cursor: default; }
+    .review-actions { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin: 0 0 8px; }
+    .review-actions .sort-modes { margin: 0; }
+    tbody.folder-head td:first-child { width: 1%; }
     .not-scanned { color: var(--text-muted); margin: 14px 0 0; }
     .sort-modes { color: var(--warn-text); margin: 0 0 8px; }
     .sort-mode { font: inherit; font-size: 13px; background: var(--panel-bg); color: var(--text-muted); border: 1px solid var(--border);
@@ -96,6 +102,7 @@
 <h1>Orphan Trawler</h1>
 <p><a href="/">&larr; qBit Prunarr</a></p>
 {% if flash %}<div class="error-banner">{{ flash }}</div>{% endif %}
+{% if done %}<div class="done-banner">{{ done }}</div>{% endif %}
 <button id="scan-btn" hx-post="/orphans/scan" hx-target="#scan-results" hx-swap="outerHTML" hx-select="#scan-results"
         hx-indicator="#scan-spinner" hx-disabled-elt="this">
   Scan Now
@@ -162,9 +169,12 @@
     <h2>Needs Review</h2>
     <p class="section-subtitle">Sonarr/Radarr + Plex don't confirm this file. Two likely explanations: it's a safe duplicate already tracked elsewhere, or it's real content that never got imported. Check each one before deleting — don't assume either way.</p>
     <form method="post" action="/orphans/delete" id="review-form">
-      <p class="sort-modes">Show:
-        <button type="button" class="sort-mode" data-mode="folder">Grouped by folder</button>
-        <button type="button" class="sort-mode" data-mode="flat">Flat list</button></p>
+      <div class="review-actions">
+        <button type="submit" id="review-delete-btn" disabled>Delete selected</button>
+        <p class="sort-modes">Show:
+          <button type="button" class="sort-mode" data-mode="folder">Grouped by folder</button>
+          <button type="button" class="sort-mode" data-mode="flat">Flat list</button></p>
+      </div>
       <table id="review-table">
         <thead>
           <tr>
@@ -227,19 +237,53 @@
         var f = folders[dir];
         var head = document.createElement('tbody');
         head.className = 'folder-head';
+        head.dataset.folder = dir;
         var row = head.insertRow();
+        var cbCell = row.insertCell();
+        var folderCb = document.createElement('input');
+        folderCb.type = 'checkbox';
+        folderCb.className = 'folder-cb';
+        folderCb.title = 'Select every file in this folder';
+        cbCell.appendChild(folderCb);
         var cell = row.insertCell();
-        cell.colSpan = cols;
+        cell.colSpan = cols - 1;
         cell.textContent = (dir || '(top level)') + '/';
         var meta = document.createElement('span');
         meta.className = 'folder-meta';
         meta.textContent = f.units.length + (f.units.length === 1 ? ' file, ' : ' files, ') + formatGB(f.bytes);
         cell.appendChild(meta);
+        f.units.forEach(function (u) { u.dataset.folder = dir; });
         table.appendChild(head);
         f.units
           .sort(function (a, b) { return a.dataset.path < b.dataset.path ? -1 : 1; })
           .forEach(function (u) { table.appendChild(u); });
+        refreshFolderState(table, dir);
       });
+  }
+
+  function folderUnits(table, dir) {
+    return Array.prototype.filter.call(table.querySelectorAll(':scope > tbody.orphan-unit'),
+      function (u) { return u.dataset.folder === dir; });
+  }
+
+  // Same tri-state as the group headers: checked when every file in the
+  // folder is ticked, "some" (indeterminate) when only part of it is.
+  function refreshFolderState(table, dir) {
+    var head = Array.prototype.find.call(table.querySelectorAll(':scope > tbody.folder-head'),
+      function (h) { return h.dataset.folder === dir; });
+    if (!head) { return; }
+    var cbs = [];
+    folderUnits(table, dir).forEach(function (u) { cbs.push.apply(cbs, u.querySelectorAll('.orphan-cb')); });
+    var checked = cbs.filter(function (c) { return c.checked; }).length;
+    var folderCb = head.querySelector('.folder-cb');
+    folderCb.checked = checked > 0 && checked === cbs.length;
+    folderCb.indeterminate = checked > 0 && checked < cbs.length;
+  }
+
+  function refreshReviewButton() {
+    var btn = document.getElementById('review-delete-btn');
+    if (!btn) { return; }
+    btn.disabled = !document.querySelector('#review-table .orphan-cb:checked');
   }
 
   function cellValue(unit, column) {
@@ -363,10 +407,41 @@
     } else if (e.target.classList && e.target.classList.contains('orphan-cb')) {
       syncGroupCheckbox(e.target);
     }
+    if (e.target.id === 'select-all-review') {
+      document.querySelectorAll('#review-table .orphan-cb, #review-table .folder-cb').forEach(function (cb) {
+        cb.checked = e.target.checked;
+        cb.indeterminate = false;
+      });
+    } else if (e.target.classList && e.target.classList.contains('folder-cb')) {
+      var table = e.target.closest('table');
+      var dir = e.target.closest('tbody.folder-head').dataset.folder;
+      folderUnits(table, dir).forEach(function (u) {
+        u.querySelectorAll('.orphan-cb').forEach(function (cb) { cb.checked = e.target.checked; });
+      });
+      refreshFolderState(table, dir);
+    } else if (e.target.closest('#review-table') && e.target.classList.contains('orphan-cb')) {
+      var unit = e.target.closest('tbody.orphan-unit');
+      if (unit && unit.dataset.folder !== undefined) { refreshFolderState(e.target.closest('table'), unit.dataset.folder); }
+    }
     if (e.target.closest('#download-table')) { refreshBulkButton(); }
+    if (e.target.closest('#review-table')) { refreshReviewButton(); }
   });
 
   document.addEventListener('htmx:afterSwap', refreshBulkButton);
+  document.addEventListener('htmx:afterSwap', refreshReviewButton);
+
+  // Needs Review is the ambiguous category, so the confirm says so and
+  // names exactly how much is about to go.
+  document.addEventListener('click', function (e) {
+    if (e.target.id !== 'review-delete-btn') { return; }
+    var picked = document.querySelectorAll('#review-table .orphan-cb:checked');
+    var bytes = 0;
+    picked.forEach(function (cb) { bytes += parseInt(cb.closest('tbody.orphan-unit').dataset.sizeBytes, 10) || 0; });
+    var msg = 'Delete ' + picked.length + (picked.length === 1 ? ' file' : ' files') + ' (' + formatGB(bytes) + ')' +
+      " that Sonarr/Radarr/Plex don't confirm?\n\nEach one is re-checked first, and anything that's no longer an orphan is skipped.";
+    if (!confirm(msg)) { e.preventDefault(); return; }
+    e.target.textContent = 'Re-checking and deleting...';
+  });
 
   document.addEventListener('htmx:beforeRequest', function (e) {
     var btn = e.detail.elt;
