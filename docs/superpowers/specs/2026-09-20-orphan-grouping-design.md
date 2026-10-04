@@ -68,7 +68,10 @@ orphans get presented.
    the configured scan subdir itself (`torrents`, `usenet`) — a group is
    never one of those roots in its entirety, only something strictly inside
    one, mirroring the existing `_boundary_for()` concept `delete_orphan`
-   already uses for prune-boundary safety.
+   already uses for prune-boundary safety. A group root is also never a
+   direct child of a scan subdir (e.g. `torrents/incoming`, `usenet/complete`),
+   since those are download-client structure, not torrents — added after
+   live NAS verification 2026-09-27.
 3. The **last** directory that passed the check (the topmost one) is that
    file's group root. Cache per-directory results — many files under a deep
    tree share the same ancestors, so this stays cheap even for hundreds of
