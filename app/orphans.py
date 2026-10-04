@@ -7,7 +7,7 @@ is enforced here: a None set (meaning "that API was unreachable or not
 configured") means nothing in that category is ever flagged as an orphan.
 """
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -22,6 +22,10 @@ class OrphanCandidate:
     # Radarr's tracked file for this movie is a sample clip, so this
     # untracked file is likely the real movie Radarr missed.
     tracks_sample: bool = False
+    # Subtitle/metadata files named after this video (relative paths).
+    # They go with it when it's deleted; Needs Review never lists them.
+    sidecars: list[str] = field(default_factory=list)
+    sidecar_bytes: int = 0
 
 
 def _file_size(data_root: str, paths: list[str]) -> int:
@@ -314,3 +318,65 @@ def mark_superseded(
             if tracked:
                 c.superseded_by = tracked
                 break
+
+
+VIDEO_EXTS = {".mkv", ".mp4", ".avi", ".m4v", ".mov", ".wmv", ".ts", ".m2ts", ".mpg", ".mpeg", ".webm", ".flv", ".vob"}
+SIDECAR_EXTS = {".srt", ".sub", ".idx", ".ass", ".ssa", ".vtt", ".sup", ".smi", ".nfo", ".jpg", ".jpeg", ".png", ".tbn"}
+
+
+def find_sidecars(data_root: str, relative_path: str) -> list[str]:
+    """Sidecar files that belong to this video and nothing else.
+
+    A sidecar is a subtitle/metadata/artwork file in the same folder whose
+    name is the video's name (minus extension) followed by "." or "-":
+    for Film.mkv that's Film.srt, Film.en.srt, Film.nfo, Film-thumb.jpg.
+
+    Two guards keep this from taking a file that belongs to another video:
+    if any other video in the folder has the same base name, nothing is
+    claimed (the sidecars are shared); and a sidecar whose name matches a
+    longer, more specific video name (Film.Part.2.srt next to
+    Film.Part.2.mkv) belongs to that video, not to Film.mkv.
+    """
+    folder_rel = os.path.dirname(relative_path)
+    name = os.path.basename(relative_path)
+    stem = os.path.splitext(name)[0]
+    try:
+        entries = os.listdir(os.path.join(data_root, folder_rel))
+    except OSError:
+        return []
+    other_video_stems = [
+        os.path.splitext(e)[0] for e in entries
+        if e != name and os.path.splitext(e)[1].lower() in VIDEO_EXTS
+    ]
+    if stem in other_video_stems:
+        return []
+
+    def owner(entry: str) -> str | None:
+        stems = [st for st in other_video_stems + [stem] if entry.startswith(st + ".") or entry.startswith(st + "-")]
+        return max(stems, key=len) if stems else None
+
+    sidecars = []
+    for e in sorted(entries):
+        if e == name or os.path.splitext(e)[1].lower() not in SIDECAR_EXTS:
+            continue
+        if owner(e) == stem:
+            sidecars.append(os.path.join(folder_rel, e) if folder_rel else e)
+    return sidecars
+
+
+def attach_sidecars(candidates: list[OrphanCandidate], data_root: str) -> None:
+    """Fill in sidecars for media-side candidates (Needs Review hides
+    sidecar files, so deleting a video would otherwise strand them)."""
+    for c in candidates:
+        if c.category != "orphaned media":
+            continue
+        found: list[str] = []
+        for p in c.paths:
+            for sc in find_sidecars(data_root, p):
+                if sc not in found:
+                    found.append(sc)
+        c.sidecars = found
+        c.sidecar_bytes = sum(
+            os.path.getsize(os.path.join(data_root, sc)) for sc in found
+            if os.path.exists(os.path.join(data_root, sc))
+        )

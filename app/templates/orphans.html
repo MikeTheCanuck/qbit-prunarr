@@ -90,6 +90,7 @@
     #sticky-delete-btn { padding: 8px 16px; background: var(--danger); color: #fff; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; }
     #sticky-delete-btn:hover { background: var(--danger-hover); }
     body { padding-bottom: 90px; }
+    .sidecars { margin-left: 8px; font-size: 12px; color: var(--text-muted); white-space: nowrap; cursor: help; }
     .tracks-sample { display: inline-block; margin-left: 8px; font-size: 12px; padding: 1px 8px; border-radius: 10px;
       background: var(--warn-bg); color: var(--warn-text); border: 1px solid var(--warn-border); white-space: nowrap; }
     tbody.folder-head .superseded, tbody.folder-head .tracks-sample { font-weight: 600; }
@@ -567,9 +568,13 @@
   document.addEventListener('click', function (e) {
     if (e.target.id !== 'review-delete-btn') { return; }
     var picked = document.querySelectorAll('#review-table .orphan-cb:checked');
-    var bytes = 0;
-    picked.forEach(function (cb) { bytes += parseInt(cb.closest('tbody.orphan-unit').dataset.sizeBytes, 10) || 0; });
+    var bytes = 0, sidecars = 0;
+    picked.forEach(function (cb) {
+      bytes += parseInt(cb.closest('tbody.orphan-unit').dataset.sizeBytes, 10) || 0;
+      sidecars += parseInt(cb.closest('tr').dataset.sidecars, 10) || 0;
+    });
     var msg = 'Delete ' + picked.length + (picked.length === 1 ? ' file' : ' files') + ' (' + formatGB(bytes) + ')' +
+      (sidecars ? ', plus ' + sidecars + ' subtitle/metadata ' + (sidecars === 1 ? 'file' : 'files') + ' named after them' : '') +
       "?\n\nNone of them are in your library (Sonarr, Radarr or Plex). Each one is re-checked first, and anything that has since shown up in the library is skipped.";
     if (!confirm(msg)) { e.preventDefault(); return; }
   });

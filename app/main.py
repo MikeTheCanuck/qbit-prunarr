@@ -20,6 +20,7 @@ from orphans import (
     classify_download_orphans,
     classify_media_orphans,
     delete_orphan,
+    attach_sidecars,
     is_tv_path,
     mark_superseded,
     path_tracked,
@@ -365,6 +366,7 @@ def run_scan() -> tuple[list[OrphanCandidate], dict[str, str]]:
         result, data_root, TV_SUBDIRS, sonarr_paths, radarr_paths, plex_episode_paths, plex_movie_paths
     )
     mark_superseded(candidates, radarr_paths, TV_SUBDIRS)
+    attach_sidecars(candidates, data_root)
 
     _scan_cache.clear()
     for c in candidates:
@@ -425,6 +427,7 @@ def _enrich_candidate(c: OrphanCandidate) -> dict:
         "size_bytes": c.size_bytes,
         "superseded_by": c.superseded_by,
         "tracks_sample": c.tracks_sample,
+        "sidecars": [os.path.basename(sc) for sc in c.sidecars],
     }
 
 
@@ -570,6 +573,19 @@ def _delete_candidate(data_root: str, candidate: OrphanCandidate) -> None:
     for path in candidate.paths:
         delete_orphan(data_root, path, _boundary_for(path))
         _audit(path, candidate.size_bytes)
+    # Sidecars were found by the same re-verify scan that produced this
+    # candidate, so they're current. A missing one is fine (already gone);
+    # a failure is logged but doesn't undo or block the video's delete.
+    for sc in candidate.sidecars:
+        full = os.path.join(data_root, sc)
+        if not os.path.exists(full):
+            continue
+        try:
+            size = os.path.getsize(full)
+            delete_orphan(data_root, sc, _boundary_for(sc))
+            _audit(sc, size)
+        except (OSError, ValueError) as e:
+            logger.warning("failed to delete sidecar %s: %s", sc, e)
 
 
 def _audit(path: str, size_bytes: int) -> None:
@@ -618,7 +634,9 @@ async def delete_single_orphan(inode: int):
             status_code=200,
             media_type="text/html",
             content=f'<tr id="orphan-row-{inode}" class="deleted-row"><td colspan="4">'
-                    f'Deleted {escape(fresh.paths[0])} ({_format_gb(fresh.size_bytes)} GB freed)</td></tr>',
+                    f'Deleted {escape(fresh.paths[0])}'
+                    + (f' plus {len(fresh.sidecars)} sidecar file(s)' if fresh.sidecars else '')
+                    + f' ({_format_gb(fresh.size_bytes)} GB freed)</td></tr>',
         )
     except (OSError, ValueError) as e:
         return Response(
@@ -738,6 +756,7 @@ async def bulk_delete_orphans(
     failed = 0
     attempted = 0
     deleted = 0
+    sidecars = 0
     skipped = 0
     freed_bytes = 0
     handled: set[int] = set()
@@ -764,8 +783,10 @@ async def bulk_delete_orphans(
         try:
             _delete_candidate(data_root, candidate)
             deleted += 1
-            freed_bytes += candidate.size_bytes
+            freed_bytes += candidate.size_bytes + candidate.sidecar_bytes
+            sidecars += len(candidate.sidecars)
             _last_bulk_deleted.extend(candidate.paths)
+            _last_bulk_deleted.extend(candidate.sidecars)
         except (OSError, ValueError) as e:
             failed += 1
             logger.warning("failed to delete orphan inode %s: %s", inode, e)
@@ -785,7 +806,10 @@ async def bulk_delete_orphans(
 
     # Success still needs saying: the redirect lands on an unscanned page,
     # which otherwise looks the same whether anything was deleted or not.
-    done = f"Deleted {deleted} {'file' if deleted == 1 else 'files'} ({_format_gb(freed_bytes)} GB freed)."
+    done = f"Deleted {deleted} {'file' if deleted == 1 else 'files'}"
+    if sidecars:
+        done += f" plus {sidecars} subtitle/metadata {'file' if sidecars == 1 else 'files'} that went with them"
+    done += f" ({_format_gb(freed_bytes)} GB freed)."
     if skipped:
         done += f" {skipped} skipped: no longer orphans."
     done += " Scan again to see what's left."

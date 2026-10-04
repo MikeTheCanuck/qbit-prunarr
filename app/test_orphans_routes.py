@@ -1019,3 +1019,33 @@ def test_bulk_delete_records_exactly_what_it_removed(tmp_path, monkeypatch):
 
     assert "media/movies/Film/old copy.avi" in page.text
     assert "DELETED media/movies/Film/old copy.avi (2000 bytes)" in audit.read_text()
+
+
+def test_deleting_a_review_video_takes_its_sidecars_but_nothing_else(tmp_path, monkeypatch):
+    import os
+    audit = tmp_path / "audit.log"
+    monkeypatch.setenv("AUDIT_LOG", str(audit))
+    d = os.path.join(str(tmp_path), "media", "movies", "Film")
+    _make_file(os.path.join(d, "Old.mp4"), content=b"x" * 3000)
+    _make_file(os.path.join(d, "Old.srt"), content=b"x" * 30)
+    _make_file(os.path.join(d, "Other.srt"), content=b"x" * 30)
+
+    with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
+         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set(), get_all_queue_paths=set())), \
+         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set(), get_all_queue_paths=set())), \
+         patch("main.PlexClient", return_value=_mock_client(
+             get_all_movie_paths=set(), get_all_episode_paths=set()
+         )):
+        client = TestClient(app, follow_redirects=False)
+        scan = client.post("/orphans/scan")
+        assert "+1 sidecar" in scan.text
+        inodes = [i for i, c in main._scan_cache.items() if c.paths[0].endswith("Old.mp4")]
+        response = client.post("/orphans/delete", data={"inodes": [str(i) for i in inodes]})
+        page = client.get(response.headers["location"])
+
+    assert not os.path.exists(os.path.join(d, "Old.mp4"))
+    assert not os.path.exists(os.path.join(d, "Old.srt"))
+    assert os.path.exists(os.path.join(d, "Other.srt"))
+    assert "plus 1 subtitle/metadata file" in page.text
+    assert "media/movies/Film/Old.srt" in page.text
+    assert "DELETED media/movies/Film/Old.srt (30 bytes)" in audit.read_text()

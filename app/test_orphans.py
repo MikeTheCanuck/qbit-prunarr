@@ -500,3 +500,49 @@ def test_sample_in_the_same_folder_still_never_supersedes():
     real = OrphanCandidate(inode=1, paths=[f"{folder}/Film.mkv"], category="orphaned media", size_bytes=1)
     mark_superseded([real], {f"{folder}/Film-sample.mkv"}, {"media/tv"})
     assert real.superseded_by is None and real.tracks_sample is True
+
+
+def _touch(root, rel, size=10):
+    import os
+    full = os.path.join(root, rel)
+    os.makedirs(os.path.dirname(full), exist_ok=True)
+    with open(full, "wb") as f:
+        f.write(b"x" * size)
+
+
+def test_find_sidecars_takes_only_files_named_after_the_video(tmp_path):
+    from orphans import find_sidecars
+    root, d = str(tmp_path), "media/movies/ROTLD II"
+    for name in ["Old WEBRip.mp4", "Old WEBRip.srt", "Old WEBRip.en.srt", "Old WEBRip-thumb.jpg",
+                 "Current (1988) Bluray-1080p.mp4", "Current (1988) Bluray-1080p.en.srt", ".DS_Store"]:
+        _touch(root, f"{d}/{name}")
+    got = [p.split("/")[-1] for p in find_sidecars(root, f"{d}/Old WEBRip.mp4")]
+    assert got == ["Old WEBRip-thumb.jpg", "Old WEBRip.en.srt", "Old WEBRip.srt"]
+
+
+def test_find_sidecars_claims_nothing_when_another_video_shares_the_name(tmp_path):
+    from orphans import find_sidecars
+    root, d = str(tmp_path), "media/movies/Film"
+    for name in ["Film.avi", "Film.mkv", "Film.srt"]:
+        _touch(root, f"{d}/{name}")
+    assert find_sidecars(root, f"{d}/Film.avi") == []
+
+
+def test_find_sidecars_leaves_a_more_specific_videos_sidecars_alone(tmp_path):
+    from orphans import find_sidecars
+    root, d = str(tmp_path), "media/movies/Film"
+    for name in ["Film.mkv", "Film.srt", "Film.Part.2.mkv", "Film.Part.2.srt"]:
+        _touch(root, f"{d}/{name}")
+    assert [p.split("/")[-1] for p in find_sidecars(root, f"{d}/Film.mkv")] == ["Film.srt"]
+
+
+def test_multi_cd_rip_sidecars_split_per_disc(tmp_path):
+    """Save the Green Planet: each CD's .srt goes with its own .avi; the
+    release-wide .nfo isn't named after any one disc, so it stays."""
+    from orphans import find_sidecars
+    root, d = str(tmp_path), "media/movies/Green Planet"
+    for n in (1, 2, 3):
+        _touch(root, f"{d}/GP.CD{n}-WAF.avi")
+        _touch(root, f"{d}/GP.CD{n}-WAF.srt")
+    _touch(root, f"{d}/GP.3CD-WAF.nfo")
+    assert [p.split("/")[-1] for p in find_sidecars(root, f"{d}/GP.CD2-WAF.avi")] == ["GP.CD2-WAF.srt"]
