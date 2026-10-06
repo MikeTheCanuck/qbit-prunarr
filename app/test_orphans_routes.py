@@ -596,7 +596,7 @@ def test_group_delete_removes_every_file_and_the_emptied_tree(tmp_path):
         response = client.post("/orphans/groups/delete", data={"root": BLUEBIRD})
 
     assert response.status_code == 200
-    assert response.text == ""
+    assert 'class="deleted-row"' in response.text and "Deleted" in response.text
     assert not os.path.exists(os.path.join(root, *BLUEBIRD.split("/")))  # incl. empty AUXDATA/
     assert os.path.exists(os.path.join(root, *OTHER_MOVIE.split("/"), "movie.mkv"))
 
@@ -909,3 +909,143 @@ def test_is_mac_junk_helper():
     assert main._is_mac_junk(["torrents/incoming/._foo.mkv"])
     assert not main._is_mac_junk(["torrents/incoming/x.DS_Store"])
     assert not main._is_mac_junk(["torrents/incoming/._foo.mkv", "torrents/incoming/real.mkv"])
+
+
+def test_sections_render_as_tabs_with_counts(tmp_path):
+    """Unlinked Downloads and Needs Review are tabs on one page, not stacked
+    sections, and each tab shows how many items (and GB) are behind it."""
+    import os
+    root = str(tmp_path)
+    _make_file(os.path.join(root, "torrents", "seed.mkv"))
+    _make_file(os.path.join(root, "media", "movies", "orphan-movie.mkv"))
+
+    with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
+         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set(), get_all_queue_paths=set())), \
+         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set(), get_all_queue_paths=set())), \
+         patch("main.PlexClient", return_value=_mock_client(
+             get_all_movie_paths=set(), get_all_episode_paths=set()
+         )):
+        client = TestClient(app)
+        response = client.post("/orphans/scan")
+
+    html = response.text
+    assert 'data-tab="download"' in html and 'data-tab="review"' in html
+    assert 'data-panel="download"' in html and 'data-panel="review"' in html
+    # Each table lives inside its own tab panel.
+    assert html.index('data-panel="download"') < html.index('id="download-table"') < html.index('data-panel="review"')
+    assert html.index('data-panel="review"') < html.index('id="review-table"')
+    assert html.count('class="tab-count">1 ·') == 2
+
+
+def test_tabs_show_no_counts_before_a_scan():
+    """Before any scan, a '0 · 0.0 GB' badge would read as a finished
+    analysis that found nothing, so the tabs show names only."""
+    response = TestClient(app).get("/orphans")
+    assert 'data-tab="download"' in response.text
+    assert 'class="tab-count"' not in response.text
+    assert "Not scanned yet" in response.text
+
+
+def test_needs_review_offers_folder_grouping():
+    response = TestClient(app).get("/orphans")
+    assert 'data-mode="folder"' in response.text and 'data-mode="flat"' in response.text
+
+
+def test_review_form_has_its_own_bulk_delete_button(tmp_path):
+    """Needs Review gets a submit inside its own form, so its checkboxes do
+    something - and still can't post anything from the download table."""
+    with _services():
+        response = TestClient(app).post("/orphans/scan")
+
+    start = response.text.index('id="review-form"')
+    form = response.text[start:response.text.index("</form>", start)]
+    assert 'id="review-delete-btn"' in form
+    assert 'type="submit"' in form
+    assert 'id="bulk-delete-btn"' not in form
+
+
+def test_bulk_delete_success_says_what_it_did(tmp_path):
+    """A clean bulk delete redirects to an unscanned page, so it has to
+    report the count and space freed or it looks like nothing happened."""
+    import os
+    path_a = os.path.join(str(tmp_path), "media", "movies", "a.mkv")
+    _make_file(path_a, content=b"x" * 2000)
+
+    with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
+         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set(), get_all_queue_paths=set())), \
+         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set(), get_all_queue_paths=set())), \
+         patch("main.PlexClient", return_value=_mock_client(
+             get_all_movie_paths=set(), get_all_episode_paths=set()
+         )):
+        client = TestClient(app, follow_redirects=False)
+        client.post("/orphans/scan")
+        inodes = list(main._scan_cache.keys())
+        response = client.post("/orphans/delete", data={"inodes": [str(i) for i in inodes]})
+        page = client.get(response.headers["location"])
+
+    assert not os.path.exists(path_a)
+    assert "done=" in response.headers["location"]
+    assert "Deleted 1 file" in page.text
+    assert 'class="done-banner"' in page.text
+
+
+def test_page_has_sticky_delete_bar_and_folder_controls():
+    html = TestClient(app).get("/orphans").text
+    assert 'id="sticky-delete"' in html and 'id="sticky-delete-btn"' in html
+    assert 'data-folders="expand"' in html and 'data-folders="collapse"' in html
+
+
+def test_bulk_delete_records_exactly_what_it_removed(tmp_path, monkeypatch):
+    """The banner lists the deleted paths, and every delete is appended to
+    AUDIT_LOG, so 'what did that delete actually remove?' always has an
+    answer, even after the container is recreated."""
+    import os
+    audit = tmp_path / "audit.log"
+    monkeypatch.setenv("AUDIT_LOG", str(audit))
+    path_a = os.path.join(str(tmp_path), "media", "movies", "Film", "old copy.avi")
+    _make_file(path_a, content=b"x" * 2000)
+
+    with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
+         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set(), get_all_queue_paths=set())), \
+         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set(), get_all_queue_paths=set())), \
+         patch("main.PlexClient", return_value=_mock_client(
+             get_all_movie_paths=set(), get_all_episode_paths=set()
+         )):
+        client = TestClient(app, follow_redirects=False)
+        client.post("/orphans/scan")
+        inodes = list(main._scan_cache.keys())
+        response = client.post("/orphans/delete", data={"inodes": [str(i) for i in inodes]})
+        page = client.get(response.headers["location"])
+
+    assert "media/movies/Film/old copy.avi" in page.text
+    assert "DELETED media/movies/Film/old copy.avi (2000 bytes)" in audit.read_text()
+
+
+def test_deleting_a_review_video_takes_its_sidecars_but_nothing_else(tmp_path, monkeypatch):
+    import os
+    audit = tmp_path / "audit.log"
+    monkeypatch.setenv("AUDIT_LOG", str(audit))
+    d = os.path.join(str(tmp_path), "media", "movies", "Film")
+    _make_file(os.path.join(d, "Old.mp4"), content=b"x" * 3000)
+    _make_file(os.path.join(d, "Old.srt"), content=b"x" * 30)
+    _make_file(os.path.join(d, "Other.srt"), content=b"x" * 30)
+
+    with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
+         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set(), get_all_queue_paths=set())), \
+         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set(), get_all_queue_paths=set())), \
+         patch("main.PlexClient", return_value=_mock_client(
+             get_all_movie_paths=set(), get_all_episode_paths=set()
+         )):
+        client = TestClient(app, follow_redirects=False)
+        scan = client.post("/orphans/scan")
+        assert "+1 sidecar" in scan.text
+        inodes = [i for i, c in main._scan_cache.items() if c.paths[0].endswith("Old.mp4")]
+        response = client.post("/orphans/delete", data={"inodes": [str(i) for i in inodes]})
+        page = client.get(response.headers["location"])
+
+    assert not os.path.exists(os.path.join(d, "Old.mp4"))
+    assert not os.path.exists(os.path.join(d, "Old.srt"))
+    assert os.path.exists(os.path.join(d, "Other.srt"))
+    assert "plus 1 subtitle/metadata file" in page.text
+    assert "media/movies/Film/Old.srt" in page.text
+    assert "DELETED media/movies/Film/Old.srt (30 bytes)" in audit.read_text()

@@ -2,6 +2,7 @@
 import asyncio
 import hashlib
 import logging
+from datetime import datetime
 import os
 import time
 from html import escape
@@ -19,7 +20,9 @@ from orphans import (
     classify_download_orphans,
     classify_media_orphans,
     delete_orphan,
+    attach_sidecars,
     is_tv_path,
+    mark_superseded,
     path_tracked,
     prune_empty_tree,
 )
@@ -32,6 +35,15 @@ from sonarr import SonarrClient
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
 logger = logging.getLogger("qbit-prunarr")
+logger.setLevel(logging.INFO)
+if not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s"))
+    logger.addHandler(_handler)
+    logger.propagate = False
+
+# Paths removed by the most recent bulk delete, shown under its banner.
+_last_bulk_deleted: list[str] = []
 
 BUCKETS = [
     ("180d+", 180, None),
@@ -353,6 +365,8 @@ def run_scan() -> tuple[list[OrphanCandidate], dict[str, str]]:
     candidates += classify_media_orphans(
         result, data_root, TV_SUBDIRS, sonarr_paths, radarr_paths, plex_episode_paths, plex_movie_paths
     )
+    mark_superseded(candidates, radarr_paths, TV_SUBDIRS)
+    attach_sidecars(candidates, data_root)
 
     _scan_cache.clear()
     for c in candidates:
@@ -411,6 +425,9 @@ def _enrich_candidate(c: OrphanCandidate) -> dict:
         "category": c.category,
         "size_gb": _format_gb(c.size_bytes),
         "size_bytes": c.size_bytes,
+        "superseded_by": c.superseded_by,
+        "tracks_sample": c.tracks_sample,
+        "sidecars": [os.path.basename(sc) for sc in c.sidecars],
     }
 
 
@@ -466,7 +483,7 @@ def _download_units(download_candidates: list[dict]) -> list[dict]:
     return units
 
 
-_EMPTY_ORPHANS_CONTEXT = {"download_units": [], "review_candidates": [], "status_lines": []}
+_EMPTY_ORPHANS_CONTEXT = {"download_units": [], "review_candidates": [], "status_lines": [], "scanned": False}
 
 
 def _split_by_category(candidates: list[dict]) -> tuple[list[dict], list[dict]]:
@@ -486,10 +503,12 @@ def _split_by_category(candidates: list[dict]) -> tuple[list[dict], list[dict]]:
 
 
 @app.get("/orphans", response_class=HTMLResponse)
-async def orphans_page(request: Request, flash: Optional[str] = None):
+async def orphans_page(request: Request, flash: Optional[str] = None, done: Optional[str] = None):
     try:
         return templates.TemplateResponse(
-            request, "orphans.html", {**_EMPTY_ORPHANS_CONTEXT, "error": None, "flash": flash}
+            request, "orphans.html",
+            {**_EMPTY_ORPHANS_CONTEXT, "error": None, "flash": flash, "done": done,
+             "deleted_paths": list(_last_bulk_deleted) if done else []}
         )
     except Exception:
         return templates.TemplateResponse(
@@ -518,6 +537,7 @@ async def orphans_scan(request: Request):
                 "review_candidates": review_candidates,
                 "error": None,
                 "status_lines": _status_lines(statuses),
+                "scanned": True,
             },
         )
     except Exception:
@@ -552,6 +572,37 @@ def _delete_candidate(data_root: str, candidate: OrphanCandidate) -> None:
     """
     for path in candidate.paths:
         delete_orphan(data_root, path, _boundary_for(path))
+        _audit(path, candidate.size_bytes)
+    # Sidecars were found by the same re-verify scan that produced this
+    # candidate, so they're current. A missing one is fine (already gone);
+    # a failure is logged but doesn't undo or block the video's delete.
+    for sc in candidate.sidecars:
+        full = os.path.join(data_root, sc)
+        if not os.path.exists(full):
+            continue
+        try:
+            size = os.path.getsize(full)
+            delete_orphan(data_root, sc, _boundary_for(sc))
+            _audit(sc, size)
+        except (OSError, ValueError) as e:
+            logger.warning("failed to delete sidecar %s: %s", sc, e)
+
+
+def _audit(path: str, size_bytes: int) -> None:
+    """Record every file this app deletes. Container logs vanish when the
+    container is recreated (every rebuild), so if AUDIT_LOG is set the same
+    line is also appended to that file, which should live on a mounted
+    volume to survive."""
+    line = f"DELETED {path} ({size_bytes} bytes)"
+    logger.info(line)
+    audit_path = os.environ.get("AUDIT_LOG")
+    if not audit_path:
+        return
+    try:
+        with open(audit_path, "a") as f:
+            f.write(f"{datetime.now().isoformat(timespec='seconds')} {line}\n")
+    except OSError as e:
+        logger.warning("could not write audit log %s: %s", audit_path, e)
 
 
 @app.delete("/orphans/{inode}")
@@ -577,7 +628,16 @@ async def delete_single_orphan(inode: int):
 
     try:
         _delete_candidate(_current_data_root(), fresh)
-        return Response(status_code=200, content="")
+        # A brief confirmation row instead of an empty swap, so the delete
+        # visibly lands; the page fades it out after a few seconds.
+        return Response(
+            status_code=200,
+            media_type="text/html",
+            content=f'<tr id="orphan-row-{inode}" class="deleted-row"><td colspan="4">'
+                    f'Deleted {escape(fresh.paths[0])}'
+                    + (f' plus {len(fresh.sidecars)} sidecar file(s)' if fresh.sidecars else '')
+                    + f' ({_format_gb(fresh.size_bytes)} GB freed)</td></tr>',
+        )
     except (OSError, ValueError) as e:
         return Response(
             status_code=200,
@@ -625,12 +685,14 @@ def _delete_group(
     return deleted, failed, skipped
 
 
-def _group_message(dom_id: str, message: str, error: bool = False) -> Response:
+def _group_message(dom_id: str, message: str, error: bool = False, done: bool = False) -> Response:
     style = ' style="color:red"' if error else ""
+    # "deleted-row" tells the page to fade the confirmation out after a moment.
+    cls = ' class="deleted-row"' if done else ""
     return Response(
         status_code=200,
         media_type="text/html",
-        content=f'<tbody id="{dom_id}"><tr><td colspan="4"{style}>{escape(message)}</td></tr></tbody>',
+        content=f'<tbody id="{dom_id}"{cls}><tr><td colspan="4"{style}>{escape(message)}</td></tr></tbody>',
     )
 
 
@@ -661,7 +723,9 @@ async def delete_orphan_group(root: str = Form(...)):
         return _group_message(dom_id, f"{failed} of {total} deletes failed — check logs", error=True)
     if skipped:
         return _group_message(dom_id, f"Deleted {deleted}; {skipped} no longer orphans — skipped")
-    return Response(status_code=200, content="")
+    return _group_message(
+        dom_id, f"Deleted {group.root}/ ({deleted} files, {_format_gb(group.size_bytes)} GB freed)", done=True
+    )
 
 
 @app.post("/orphans/delete")
@@ -688,13 +752,24 @@ async def bulk_delete_orphans(
         )
 
     data_root = _current_data_root()
+    _last_bulk_deleted.clear()
     failed = 0
     attempted = 0
+    deleted = 0
+    sidecars = 0
+    skipped = 0
+    freed_bytes = 0
     handled: set[int] = set()
     for group in groups:
-        _, group_failed, _ = _delete_group(data_root, group, fresh_candidates)
+        group_deleted, group_failed, group_skipped = _delete_group(data_root, group, fresh_candidates)
         failed += group_failed
+        deleted += group_deleted
+        skipped += group_skipped
         attempted += len(group.members)
+        if not group_failed and not group_skipped:
+            freed_bytes += group.size_bytes
+        if group_deleted:
+            _last_bulk_deleted.append(f"{group.root}/ ({group_deleted} files)")
         handled.update(m.inode for m in group.members)
 
     for inode in dict.fromkeys(inodes):
@@ -703,9 +778,15 @@ async def bulk_delete_orphans(
         attempted += 1
         candidate = fresh_by_inode.get(inode)
         if candidate is None:
+            skipped += 1
             continue
         try:
             _delete_candidate(data_root, candidate)
+            deleted += 1
+            freed_bytes += candidate.size_bytes + candidate.sidecar_bytes
+            sidecars += len(candidate.sidecars)
+            _last_bulk_deleted.extend(candidate.paths)
+            _last_bulk_deleted.extend(candidate.sidecars)
         except (OSError, ValueError) as e:
             failed += 1
             logger.warning("failed to delete orphan inode %s: %s", inode, e)
@@ -723,4 +804,13 @@ async def bulk_delete_orphans(
             url=f"/orphans?flash={quote('; '.join(messages))}", status_code=302
         )
 
-    return RedirectResponse(url="/orphans", status_code=302)
+    # Success still needs saying: the redirect lands on an unscanned page,
+    # which otherwise looks the same whether anything was deleted or not.
+    done = f"Deleted {deleted} {'file' if deleted == 1 else 'files'}"
+    if sidecars:
+        done += f" plus {sidecars} subtitle/metadata {'file' if sidecars == 1 else 'files'} that went with them"
+    done += f" ({_format_gb(freed_bytes)} GB freed)."
+    if skipped:
+        done += f" {skipped} skipped: no longer orphans."
+    done += " Scan again to see what's left."
+    return RedirectResponse(url=f"/orphans?done={quote(done)}", status_code=302)

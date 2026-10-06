@@ -7,7 +7,7 @@ is enforced here: a None set (meaning "that API was unreachable or not
 configured") means nothing in that category is ever flagged as an orphan.
 """
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -16,6 +16,16 @@ class OrphanCandidate:
     paths: list[str]
     category: str
     size_bytes: int
+    # Set when Radarr tracks a different file in this same movie folder:
+    # this one is very likely an older copy the newer import left behind.
+    superseded_by: str | None = None
+    # Radarr's tracked file for this movie is a sample clip, so this
+    # untracked file is likely the real movie Radarr missed.
+    tracks_sample: bool = False
+    # Subtitle/metadata files named after this video (relative paths).
+    # They go with it when it's deleted; Needs Review never lists them.
+    sidecars: list[str] = field(default_factory=list)
+    sidecar_bytes: int = 0
 
 
 def _file_size(data_root: str, paths: list[str]) -> int:
@@ -255,3 +265,118 @@ def prune_empty_tree(data_root: str, root_rel: str, boundary: str) -> None:
         except OSError:
             break
         parent = os.path.dirname(parent)
+
+
+def _title_folder(path: str) -> str:
+    """media/movies/<Title>/... -> media/movies/<Title>. The movie (or show)
+    folder is what a file belongs to, however deep it sits inside."""
+    parts = path.split("/")
+    return "/".join(parts[:3]) if len(parts) > 3 and parts[0] == "media" else os.path.dirname(path)
+
+
+def _is_sample(path: str) -> bool:
+    return "sample" in path.lower()
+
+
+def mark_superseded(
+    candidates: list[OrphanCandidate], radarr_paths: set[str] | None, tv_subdirs: set[str]
+) -> None:
+    """Flag movie-side review candidates that share a folder with the file
+    Radarr actually tracks for that movie.
+
+    Radarr only cleans up files it imported itself, so an older full copy
+    (a WEBRip from years ago, a multi-CD rip) survives next to a newer
+    import. A candidate that IS Radarr's tracked file (here only because
+    Plex doesn't know it) is never marked; neither is anything in a TV
+    folder, where an untracked file is more likely an extra than a copy.
+
+    When Radarr's tracked file for the movie is a sample clip, the
+    candidate is probably the real movie, so it gets `tracks_sample`
+    instead. Never call the real movie "superseded" by its own sample.
+    """
+    if radarr_paths is None:
+        return
+    tracked_in_dir: dict[str, str] = {}
+    tracked_samples_in_title: set[str] = set()
+    for p in radarr_paths:
+        tracked_in_dir[os.path.dirname(p)] = os.path.basename(p)
+        if _is_sample(p):
+            tracked_samples_in_title.add(_title_folder(p))
+    for c in candidates:
+        if c.category != "orphaned media":
+            continue
+        if any(is_tv_path(p, tv_subdirs) for p in c.paths):
+            continue
+        if any(p in radarr_paths for p in c.paths):
+            continue
+        if any(_title_folder(p) in tracked_samples_in_title for p in c.paths):
+            if not any(_is_sample(p) for p in c.paths):
+                c.tracks_sample = True
+            continue
+        for p in c.paths:
+            tracked = tracked_in_dir.get(os.path.dirname(p))
+            if tracked:
+                c.superseded_by = tracked
+                break
+
+
+VIDEO_EXTS = {".mkv", ".mp4", ".avi", ".m4v", ".mov", ".wmv", ".ts", ".m2ts", ".mpg", ".mpeg", ".webm", ".flv", ".vob"}
+SIDECAR_EXTS = {".srt", ".sub", ".idx", ".ass", ".ssa", ".vtt", ".sup", ".smi", ".nfo", ".jpg", ".jpeg", ".png", ".tbn"}
+
+
+def find_sidecars(data_root: str, relative_path: str) -> list[str]:
+    """Sidecar files that belong to this video and nothing else.
+
+    A sidecar is a subtitle/metadata/artwork file in the same folder whose
+    name is the video's name (minus extension) followed by "." or "-":
+    for Film.mkv that's Film.srt, Film.en.srt, Film.nfo, Film-thumb.jpg.
+
+    Two guards keep this from taking a file that belongs to another video:
+    if any other video in the folder has the same base name, nothing is
+    claimed (the sidecars are shared); and a sidecar whose name matches a
+    longer, more specific video name (Film.Part.2.srt next to
+    Film.Part.2.mkv) belongs to that video, not to Film.mkv.
+    """
+    folder_rel = os.path.dirname(relative_path)
+    name = os.path.basename(relative_path)
+    stem = os.path.splitext(name)[0]
+    try:
+        entries = os.listdir(os.path.join(data_root, folder_rel))
+    except OSError:
+        return []
+    other_video_stems = [
+        os.path.splitext(e)[0] for e in entries
+        if e != name and os.path.splitext(e)[1].lower() in VIDEO_EXTS
+    ]
+    if stem in other_video_stems:
+        return []
+
+    def owner(entry: str) -> str | None:
+        stems = [st for st in other_video_stems + [stem] if entry.startswith(st + ".") or entry.startswith(st + "-")]
+        return max(stems, key=len) if stems else None
+
+    sidecars = []
+    for e in sorted(entries):
+        if e == name or os.path.splitext(e)[1].lower() not in SIDECAR_EXTS:
+            continue
+        if owner(e) == stem:
+            sidecars.append(os.path.join(folder_rel, e) if folder_rel else e)
+    return sidecars
+
+
+def attach_sidecars(candidates: list[OrphanCandidate], data_root: str) -> None:
+    """Fill in sidecars for media-side candidates (Needs Review hides
+    sidecar files, so deleting a video would otherwise strand them)."""
+    for c in candidates:
+        if c.category != "orphaned media":
+            continue
+        found: list[str] = []
+        for p in c.paths:
+            for sc in find_sidecars(data_root, p):
+                if sc not in found:
+                    found.append(sc)
+        c.sidecars = found
+        c.sidecar_bytes = sum(
+            os.path.getsize(os.path.join(data_root, sc)) for sc in found
+            if os.path.exists(os.path.join(data_root, sc))
+        )

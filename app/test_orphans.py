@@ -451,3 +451,98 @@ def test_prune_empty_tree_refuses_root_outside_boundary(tmp_path):
         prune_empty_tree(root, "media/movies/empty", "torrents")
 
     assert os.path.isdir(os.path.join(root, "media", "movies", "empty"))
+
+
+def test_mark_superseded_flags_an_old_copy_beside_radarrs_file():
+    from orphans import OrphanCandidate, mark_superseded
+    folder = "media/movies/Return of the Living Dead II 1080p WEBRip"
+    old = OrphanCandidate(inode=1, paths=[f"{folder}/ROTLD II WEBRip.mp4"], category="orphaned media", size_bytes=1)
+    mark_superseded([old], {f"{folder}/ROTLD II (1988) Bluray-1080p.mp4"}, {"media/tv"})
+    assert old.superseded_by == "ROTLD II (1988) Bluray-1080p.mp4"
+
+
+def test_mark_superseded_leaves_radarrs_own_file_alone():
+    """Radarr's tracked file can land in Needs Review when Plex doesn't know
+    it yet. It's the current copy, never a superseded one."""
+    from orphans import OrphanCandidate, mark_superseded
+    tracked = "media/movies/Film (2001)/Film (2001).mp4"
+    c = OrphanCandidate(inode=1, paths=[tracked], category="orphaned media", size_bytes=1)
+    mark_superseded([c], {tracked}, {"media/tv"})
+    assert c.superseded_by is None
+
+
+def test_mark_superseded_ignores_tv_and_other_folders_and_unknown_radarr():
+    from orphans import OrphanCandidate, mark_superseded
+    tv = OrphanCandidate(inode=1, paths=["media/tv/Show/S01/extra.mkv"], category="orphaned media", size_bytes=1)
+    lone = OrphanCandidate(inode=2, paths=["media/movies/Other/old.avi"], category="orphaned media", size_bytes=1)
+    radarr = {"media/tv/Show/S01/ep.mkv", "media/movies/Film/Film.mp4"}
+    mark_superseded([tv, lone], radarr, {"media/tv"})
+    assert tv.superseded_by is None and lone.superseded_by is None
+    mark_superseded([lone], None, {"media/tv"})  # Radarr unreachable: no labels, no crash
+    assert lone.superseded_by is None
+
+
+def test_real_movie_is_never_superseded_by_a_tracked_sample():
+    """Iron Man 3 on the live NAS: Radarr's movieFile is the sample clip in
+    a subfolder, so the untracked 11.5GB mkv is the real movie."""
+    from orphans import OrphanCandidate, mark_superseded
+    folder = "media/movies/Iron Man 3 2013 BluRay 1080p DTS AC3 x264-MgB"
+    real = OrphanCandidate(inode=1, paths=[f"{folder}/Iron Man 3 2013 BluRay 1080p DTS AC3 x264-MgB.mkv"],
+                           category="orphaned media", size_bytes=1)
+    mark_superseded([real], {f"{folder}/Sample,Screens/Iron Man 3 (Sample).mkv"}, {"media/tv"})
+    assert real.superseded_by is None
+    assert real.tracks_sample is True
+
+
+def test_sample_in_the_same_folder_still_never_supersedes():
+    from orphans import OrphanCandidate, mark_superseded
+    folder = "media/movies/Film"
+    real = OrphanCandidate(inode=1, paths=[f"{folder}/Film.mkv"], category="orphaned media", size_bytes=1)
+    mark_superseded([real], {f"{folder}/Film-sample.mkv"}, {"media/tv"})
+    assert real.superseded_by is None and real.tracks_sample is True
+
+
+def _touch(root, rel, size=10):
+    import os
+    full = os.path.join(root, rel)
+    os.makedirs(os.path.dirname(full), exist_ok=True)
+    with open(full, "wb") as f:
+        f.write(b"x" * size)
+
+
+def test_find_sidecars_takes_only_files_named_after_the_video(tmp_path):
+    from orphans import find_sidecars
+    root, d = str(tmp_path), "media/movies/ROTLD II"
+    for name in ["Old WEBRip.mp4", "Old WEBRip.srt", "Old WEBRip.en.srt", "Old WEBRip-thumb.jpg",
+                 "Current (1988) Bluray-1080p.mp4", "Current (1988) Bluray-1080p.en.srt", ".DS_Store"]:
+        _touch(root, f"{d}/{name}")
+    got = [p.split("/")[-1] for p in find_sidecars(root, f"{d}/Old WEBRip.mp4")]
+    assert got == ["Old WEBRip-thumb.jpg", "Old WEBRip.en.srt", "Old WEBRip.srt"]
+
+
+def test_find_sidecars_claims_nothing_when_another_video_shares_the_name(tmp_path):
+    from orphans import find_sidecars
+    root, d = str(tmp_path), "media/movies/Film"
+    for name in ["Film.avi", "Film.mkv", "Film.srt"]:
+        _touch(root, f"{d}/{name}")
+    assert find_sidecars(root, f"{d}/Film.avi") == []
+
+
+def test_find_sidecars_leaves_a_more_specific_videos_sidecars_alone(tmp_path):
+    from orphans import find_sidecars
+    root, d = str(tmp_path), "media/movies/Film"
+    for name in ["Film.mkv", "Film.srt", "Film.Part.2.mkv", "Film.Part.2.srt"]:
+        _touch(root, f"{d}/{name}")
+    assert [p.split("/")[-1] for p in find_sidecars(root, f"{d}/Film.mkv")] == ["Film.srt"]
+
+
+def test_multi_cd_rip_sidecars_split_per_disc(tmp_path):
+    """Save the Green Planet: each CD's .srt goes with its own .avi; the
+    release-wide .nfo isn't named after any one disc, so it stays."""
+    from orphans import find_sidecars
+    root, d = str(tmp_path), "media/movies/Green Planet"
+    for n in (1, 2, 3):
+        _touch(root, f"{d}/GP.CD{n}-WAF.avi")
+        _touch(root, f"{d}/GP.CD{n}-WAF.srt")
+    _touch(root, f"{d}/GP.3CD-WAF.nfo")
+    assert [p.split("/")[-1] for p in find_sidecars(root, f"{d}/GP.CD2-WAF.avi")] == ["GP.CD2-WAF.srt"]

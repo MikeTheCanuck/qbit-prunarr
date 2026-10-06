@@ -137,3 +137,24 @@ def test_get_all_content_paths_skips_missing_field(client: QBitClient, httpx_moc
     )
 
     assert client.get_all_content_paths() == set()
+
+
+def test_get_all_content_paths_includes_part_files(client: QBitClient, httpx_mock: HTTPXMock):
+    v2 = "b" * 64
+    httpx_mock.add_response(
+        url="http://qbit:8080/api/v2/torrents/info",
+        json=[
+            {"name": "V1", "hash": "a" * 40, "infohash_v1": "a" * 40, "infohash_v2": "",
+             "save_path": "/downloads/completed/", "content_path": "/downloads/completed/v1.mkv"},
+            {"name": "Hybrid", "hash": "c" * 40, "infohash_v1": "c" * 40, "infohash_v2": v2,
+             "save_path": "/downloads/completed", "download_path": "/downloads/incoming",
+             "content_path": "/downloads/incoming/hybrid"},
+        ],
+    )
+    paths = client.get_all_content_paths()
+    assert "/downloads/completed/v1.mkv" in paths
+    assert f"/downloads/completed/.{'a' * 40}.parts" in paths
+    # Hybrid: v1 and truncated v2 both covered, in both save and temp dirs.
+    assert f"/downloads/completed/.{'b' * 40}.parts" in paths
+    assert f"/downloads/incoming/.{'b' * 40}.parts" in paths
+    assert f"/downloads/incoming/.{'c' * 40}.parts" in paths

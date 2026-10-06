@@ -50,7 +50,26 @@ class QBitClient:
         response.raise_for_status()
 
     def get_all_content_paths(self) -> set[str]:
-        """Return content_path for every torrent qBittorrent currently knows about."""
+        """Return every path qBittorrent currently owns: each torrent's
+        content_path, plus the libtorrent part file it keeps beside it.
+
+        libtorrent writes skipped/partial pieces to
+        <save_path>/.<infohash>.parts, a file qBit never reports as content.
+        Without these, every active torrent's part file shows up as an
+        orphan. The infohash used is libtorrent's get_best(): v2 truncated to
+        40 hex chars for hybrid/v2 torrents, else v1. Rather than guess which
+        one qBit's `hash` field reflects, include every candidate. Extra
+        paths can only protect more files, never flag more for deletion.
+        """
         response = self._session.get(f"{self._base_url}/api/v2/torrents/info")
         response.raise_for_status()
-        return {t["content_path"] for t in response.json() if t.get("content_path")}
+        paths = set()
+        for t in response.json():
+            if t.get("content_path"):
+                paths.add(t["content_path"])
+            hashes = {h for h in (t.get("hash"), t.get("infohash_v1"), (t.get("infohash_v2") or "")[:40]) if h}
+            # While a torrent is incomplete with a temp folder enabled, its
+            # files (and part file) live under download_path instead.
+            dirs = {d.rstrip("/") for d in (t.get("save_path"), t.get("download_path")) if d}
+            paths.update(f"{d}/.{h}.parts" for d in dirs for h in hashes)
+        return paths
