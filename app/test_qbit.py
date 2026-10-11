@@ -41,6 +41,27 @@ def test_login_failure_raises(client: QBitClient, httpx_mock: HTTPXMock):
         client.login()
 
 
+def test_login_success_qbit_52_no_content(client: QBitClient, httpx_mock: HTTPXMock):
+    """qBittorrent 5.2+ answers a good login with 204 and an empty body."""
+    httpx_mock.add_response(
+        method="POST",
+        url=f"{BASE_URL}/api/v2/auth/login",
+        status_code=204,
+    )
+    client.login()
+
+
+def test_login_failure_qbit_52_unauthorized(client: QBitClient, httpx_mock: HTTPXMock):
+    """qBittorrent 5.2+ answers a bad login with 401 instead of "Fails."."""
+    httpx_mock.add_response(
+        method="POST",
+        url=f"{BASE_URL}/api/v2/auth/login",
+        status_code=401,
+    )
+    with pytest.raises(ValueError, match="qBit auth failed"):
+        client.login()
+
+
 # ---------------------------------------------------------------------------
 # Test 3: get_torrents() — returns parsed JSON list
 # ---------------------------------------------------------------------------
