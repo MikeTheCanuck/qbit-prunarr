@@ -7,7 +7,7 @@ A small web app for reclaiming disk space on a homelab media server. It does two
 
 It never deletes anything on its own. Every delete is something you ticked, confirmed, and that passed a fresh re-check first.
 
-Built for a Synology NAS running qBittorrent, Sonarr, Radarr and Plex in Docker. FastAPI, Jinja2 and HTMX. No JS framework, no build step.
+It works with exactly one stack: qBittorrent, Sonarr, Radarr and Plex, in Docker on a Synology NAS, with the \*arrs importing downloads as hardlinks (see [Before you start](#before-you-start)). It calls those four apps' APIs directly. Other download clients (Transmission, Deluge, SABnzbd's own history), other media servers (Jellyfin, Emby) and the other \*arrs (Lidarr, Readarr) aren't supported and haven't been tried. FastAPI, Jinja2 and HTMX. No JS framework, no build step.
 
 ## Why this exists
 
@@ -23,11 +23,15 @@ Sonarr and Radarr hardlink downloads into the media library, and the two copies 
 - **Unlinked Downloads**: download-side files with no media link, that no qBittorrent torrent and no Sonarr/Radarr queue item claims. These are usually safe to reclaim.
 - **Needs Review**: media-side files that aren't confirmed by *both* the relevant \*arr (Sonarr for TV, Radarr for movies) *and* Plex. These are genuinely ambiguous: a safe leftover duplicate, or real content that never got imported. Look before deleting.
 
+That first bullet only means something if your \*arrs hardlink on import. If they copy, see [Before you start](#before-you-start).
+
 Synology housekeeping folders (`@eaDir`, `#recycle`) are skipped. Subtitles, `.nfo` files and artwork are kept out of Needs Review, since no \*arr ever tracks them.
 
 ### Fail closed
 
 If a service is unreachable, or its paths don't overlap with anything on disk (the fingerprint of a wrong `*_PATH_PREFIX`), nothing that depends on it gets flagged. Each scan shows a per-service status (`ok` / `unreachable` / `unusable`) under "Service status", so you can tell a clean result from a blind one.
+
+If one of the four isn't there at all (say you run Jellyfin instead of Plex), it shows as `unreachable` and Needs Review comes back empty rather than wrong.
 
 ### Working through Needs Review
 
@@ -45,6 +49,21 @@ Single rows, whole groups (a fully orphaned folder), or a bulk selection on eith
 Every file removed is logged as `DELETED <path> (<bytes>)` in the container log and, if `AUDIT_LOG` is set, appended to that file. Container logs are thrown away on every rebuild, so put the audit file on a mounted volume (see below) if you want to be able to answer "what did that delete actually remove?" next week. The banner after a bulk delete also lists exactly what went.
 
 ## Setup
+
+### Before you start
+
+The orphan trawler assumes the TRaSH Guides convention: torrents, usenet and the media library all live under one shared folder on one Synology volume, every container mounts that folder as a single tree, and Sonarr/Radarr import a finished torrent by *hardlinking* it into the library. One file, two names, no extra space used, and the torrent keeps seeding.
+
+Sonarr and Radarr don't require this. They only hardlink when the download and the library are on the same filesystem *and* the container sees both through one mount (their "Use Hardlinks instead of Copy" setting, on by default). Otherwise they quietly copy the file instead, and plenty of setups run that way without knowing. Usenet downloads are moved rather than linked, so there's nothing to match there in any setup.
+
+If your \*arrs copy instead of link, the app still runs, but:
+
+- Nothing ever counts as linked, so every download-side file that no torrent or queue item still claims lands in Unlinked Downloads. That list mixes harmless duplicates of library files with downloads that never got imported at all, and the scan can't tell which is which. Check the library before bulk-deleting.
+- Needs Review isn't affected. It checks media files against the \*arrs and Plex, not inodes.
+
+The scan matches files by inode number alone, so `DATA_ROOT` has to be one filesystem. If `torrents/` and `media/` sit on different volumes, inode numbers can collide by chance. That only ever hides an orphan (it looks linked); it never flags a file that's in use.
+
+To check yours: `ls -i` a movie file in the library and its source in `torrents/`. Same number means hardlinked.
 
 ### Configuration
 
@@ -135,4 +154,8 @@ Design notes and implementation plans live in `docs/`.
 - Only one qBittorrent tag on the cold-torrent page.
 - Scans are on demand. Nothing runs on a schedule, and results live in memory until the next scan or restart.
 - TV extras and specials that Sonarr hasn't matched still land in Needs Review. Teaching it Plex's extras conventions and Sonarr's Season 00 is the next piece of work.
-- Built for one person's NAS. It'll work on yours if your layout is close to the one above, but it hasn't been tested anywhere else.
+- Built for one person's NAS. It'll work on yours if your stack and layout match the ones above, but it hasn't been tested anywhere else.
+
+## Contributing
+
+Bug reports, feature requests and PRs are all welcome; open an issue. If you want it working with a different client or media server, an issue describing your setup is a good place to start. I can't test against software I don't run, so a PR that adds one would need to come with tests.
