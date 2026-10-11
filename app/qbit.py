@@ -25,8 +25,12 @@ class QBitClient:
             f"{self._base_url}/api/v2/auth/login",
             data={"username": self._username, "password": self._password},
         )
+        # qBittorrent 5.1 and earlier answer 200 "Ok." or 200 "Fails.";
+        # 5.2+ answers 204 with no body on success and 401 on failure.
+        if response.status_code == 401:
+            raise ValueError("qBit auth failed")
         response.raise_for_status()
-        if response.text != "Ok.":
+        if response.status_code != 204 and response.text != "Ok.":
             raise ValueError("qBit auth failed")
 
     def get_torrents(self, tag: str) -> list[dict]:
