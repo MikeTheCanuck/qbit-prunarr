@@ -16,7 +16,8 @@ services:
     restart: unless-stopped
     # On the NAS-specific compose (qbit-prunarr-compose/compose.yaml), add:
     #   volumes:
-    #     - /volume1/data:/data
+    #     - /volume1/data:/data                       # needed by the orphan trawler
+    #     - /volume1/docker/qbit-prunarr/logs:/logs   # for AUDIT_LOG
     volumes: []
 
 networks:
