@@ -81,3 +81,51 @@ def test_sends_plex_token_header(client: PlexClient, httpx_mock: HTTPXMock):
 
     request = httpx_mock.get_requests()[0]
     assert request.headers["x-plex-token"] == "tok789"
+
+
+def test_movie_files_carry_rating_key(client: PlexClient, httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        method="GET",
+        url=f"{BASE_URL}/library/sections",
+        json=_sections_response([{"key": "1", "type": "movie", "title": "Movies"}]),
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url=f"{BASE_URL}/library/sections/1/all?type=1",
+        json=_items_response([
+            {"ratingKey": "10", "Media": [{"Part": [{"file": "/movies/A/a.mkv"}]}]},
+        ]),
+    )
+
+    assert client.get_movie_files() == {"/movies/A/a.mkv": ["10"]}
+
+
+def test_episode_files_carry_show_and_season_keys(client: PlexClient, httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        method="GET",
+        url=f"{BASE_URL}/library/sections",
+        json=_sections_response([{"key": "2", "type": "show", "title": "TV"}]),
+    )
+    httpx_mock.add_response(
+        method="GET",
+        url=f"{BASE_URL}/library/sections/2/all?type=4",
+        json=_items_response([
+            {"ratingKey": "103", "parentRatingKey": "102", "grandparentRatingKey": "101",
+             "Media": [{"Part": [{"file": "/tv/Show/S01/e1.mkv"}]}]},
+        ]),
+    )
+
+    assert client.get_episode_files() == {"/tv/Show/S01/e1.mkv": ["101", "102"]}
+
+
+def test_extra_paths_skip_online_trailers(client: PlexClient, httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        method="GET",
+        url=f"{BASE_URL}/library/metadata/10/extras",
+        json=_items_response([
+            {"subtype": "trailer", "Media": [{"Part": [{}]}]},
+            {"subtype": "featurette", "Media": [{"Part": [{"file": "/movies/A/Featurettes/x.mkv"}]}]},
+        ]),
+    )
+
+    assert client.get_extra_paths({"10"}) == {"/movies/A/Featurettes/x.mkv"}
