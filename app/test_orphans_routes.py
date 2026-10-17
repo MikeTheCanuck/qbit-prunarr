@@ -1163,3 +1163,112 @@ def test_failed_extras_lookup_keeps_everything_in_review(tmp_path):
     review = _table_region(response.text, "review-table")
     assert "Making Of.mkv" in review
     assert "Plex extras: not checked" in _swapped_region(response.text)
+    # Said where it's seen, not only inside the collapsed Service status box.
+    assert 'id="extras-unchecked"' in _swapped_region(response.text)
+    assert "No Plex extras among" not in response.text
+    assert "Plex extras couldn't be checked this scan, so any extras" in response.text
+
+
+def _row_for(review: str, name: str) -> str:
+    at = review.index(name)
+    return review[review.rindex("<tr", 0, at): review.index("</tr>", at)]
+
+
+def test_unreachable_plex_keeps_extras_in_review_and_says_not_checked(tmp_path):
+    """Plex's movie fetch fails: movie files can't be reviewed at all (fail
+    closed), and the extras lookup is skipped, so a TV Featurettes file that
+    Plex may well show as an extra stays in Needs Review as a keep."""
+    import os
+    root = str(tmp_path)
+    ep = "media/tv/Show/Season 01/Show.S01E01.mkv"
+    _make_file(os.path.join(root, *ep.split("/")))
+    _make_file(os.path.join(root, "media", "tv", "Show", "Featurettes", "Making Of.mkv"))
+    plex = _mock_client(get_all_episode_paths={ep}, get_movie_files={}, get_episode_files={ep: ["1"]},
+                        get_extra_paths={"media/tv/Show/Featurettes/Making Of.mkv"})
+    plex.get_all_movie_paths.side_effect = RuntimeError("plex down")
+    with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
+         patch("main.SonarrClient", return_value=_mock_client(
+             get_all_episode_paths={ep}, get_all_queue_paths=set(), get_series=[])), \
+         patch("main.RadarrClient", return_value=_mock_client(
+             get_all_movie_paths=set(), get_all_queue_paths=set(), get_movies=[])), \
+         patch("main.PlexClient", return_value=plex):
+        response = TestClient(app).post("/orphans/scan")
+    plex.get_extra_paths.assert_not_called()
+    swapped = _swapped_region(response.text)
+    review = _table_region(response.text, "review-table")
+    row = _row_for(review, "Featurettes/Making Of.mkv")
+    assert "verdict-plex" in row and "Leave it where it is." in row
+    assert "keep-cb" in row
+    assert "Plex: unreachable" in swapped
+    assert "Plex extras:" not in swapped
+    assert 'id="extras-unchecked"' in swapped
+    assert "Plex extras couldn't be checked this scan, so any extras" in swapped
+    assert "No Plex extras among" not in swapped
+    assert not main._extras_cache
+
+
+def test_checked_extras_with_none_found_say_so(tmp_path):
+    response = _scan_with(tmp_path, _plex_with_extras())
+    swapped = _swapped_region(response.text)
+    assert "No Plex extras among the files this scan found." in swapped
+    assert 'id="extras-unchecked"' not in swapped
+
+
+def test_extras_not_checked_before_a_scan_shows_no_notice():
+    response = TestClient(app).get("/orphans")
+    assert 'id="extras-unchecked"' not in response.text
+    assert "couldn't be checked" not in response.text
+
+
+def test_extra_confirmed_under_a_second_hardlink_path_still_moves(tmp_path):
+    """The extras lookup keys on every path's title folder, not just the
+    first: here the first path's folder has no Plex title at all."""
+    import os
+    root = str(tmp_path)
+    film = "media/movies-no-backup/Film (2020)"
+    first = os.path.join(root, "media", "movies", "Other (2019)", "copy.mkv")
+    second = os.path.join(root, *film.split("/"), "Featurettes", "Making Of.mkv")
+    _make_file(os.path.join(root, *film.split("/"), "Film.mkv"))
+    _make_file(first)
+    os.makedirs(os.path.dirname(second), exist_ok=True)
+    os.link(first, second)
+    plex = _mock_client(
+        get_all_movie_paths={f"{film}/Film.mkv"}, get_all_episode_paths=set(),
+        get_movie_files={f"{film}/Film.mkv": ["7"]}, get_episode_files={},
+        get_extra_paths={f"{film}/Featurettes/Making Of.mkv"},
+    )
+    with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
+         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set(), get_all_queue_paths=set())), \
+         patch("main.RadarrClient", return_value=_mock_client(
+             get_all_movie_paths={f"{film}/Film.mkv"}, get_all_queue_paths=set(), get_movies=[])), \
+         patch("main.PlexClient", return_value=plex):
+        TestClient(app).post("/orphans/scan")
+    inode = os.stat(first).st_ino
+    assert main._extras_cache and main._extras_cache[0].paths[0] == "media/movies/Other (2019)/copy.mkv"
+    assert inode not in main._scan_cache
+
+
+def test_bulk_delete_skips_an_inode_this_page_never_showed(tmp_path):
+    """A hand-crafted bulk POST can't delete a file the scan didn't show,
+    even when the re-verify scan would flag it."""
+    import os
+    _scan_with(tmp_path, _plex_with_extras())
+    late = os.path.join(str(tmp_path), *FILM.split("/"), "Late Arrival.mkv")
+    _make_file(late)
+    inode = os.stat(late).st_ino
+    assert inode not in main._scan_cache
+    with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
+         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set(), get_all_queue_paths=set())), \
+         patch("main.RadarrClient", return_value=_mock_client(
+             get_all_movie_paths={f"{FILM}/Film.mkv"}, get_all_queue_paths=set(), get_movies=[])), \
+         patch("main.PlexClient", return_value=_plex_with_extras()):
+        response = TestClient(app).post("/orphans/delete", data={"inodes": [str(inode)]}, follow_redirects=False)
+    assert os.path.exists(late)
+    assert inode in main._scan_cache  # the re-scan did flag it
+    assert "1 skipped" in response.headers["location"].replace("%20", " ")
+
+
+def test_review_confirm_warns_about_hand_ticked_keeps():
+    html = TestClient(app).get("/orphans").text
+    assert "#review-table .keep-cb:checked" in html
+    assert "are suggested keeps." in html

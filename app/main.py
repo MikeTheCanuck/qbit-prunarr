@@ -416,7 +416,8 @@ def run_scan() -> tuple[list[OrphanCandidate], dict[str, str]]:
     # Extras: Plex alone vouches for these, so pull them out of Needs
     # Review before anything else looks at it. Plex unusable/unreachable
     # or a failed lookup leaves extra_paths None: nothing moves.
-    review_folders = {title_folder(c.paths[0]) for c in candidates if c.category == "orphaned media"}
+    # Every hardlink path counts: an extra may be confirmed under any of them.
+    review_folders = {title_folder(p) for c in candidates if c.category == "orphaned media" for p in c.paths}
     extra_paths = None
     if plex_movie_paths is not None and plex_episode_paths is not None:
         extra_paths = _safe(lambda: _fetch_plex_extras(review_folders, plex_prefix)) if review_folders else set()
@@ -592,8 +593,15 @@ def _extras_groups() -> list[dict]:
 
 _EMPTY_ORPHANS_CONTEXT = {
     "download_units": [], "review_candidates": [], "status_lines": [], "scanned": False,
-    "extras_groups": [],
+    "extras_groups": [], "extras_checked": False,
 }
+
+
+def _extras_checked(statuses: dict[str, str]) -> bool:
+    """True only when the Plex extras lookup actually ran: Plex was usable
+    and the lookup didn't fail. Otherwise Plex extras may be sitting in
+    Needs Review, and the page has to say so."""
+    return statuses.get("Plex") == "ok" and "Plex extras" not in statuses
 
 
 def _split_by_category(candidates: list[dict]) -> tuple[list[dict], list[dict]]:
@@ -646,6 +654,7 @@ async def orphans_scan(request: Request):
                 "download_units": _download_units(download_candidates),
                 "review_candidates": review_candidates,
                 "extras_groups": _extras_groups(),
+                "extras_checked": _extras_checked(statuses),
                 "error": None,
                 "status_lines": _status_lines(statuses),
                 "scanned": True,
@@ -853,6 +862,9 @@ async def bulk_delete_orphans(
     unique_roots = list(dict.fromkeys(group_roots))
     groups = [_group_cache[r] for r in unique_roots if r in _group_cache]
     stale_roots = [r for r in unique_roots if r not in _group_cache]
+    # Like the single delete: only inodes this page's scan actually showed
+    # can be deleted, even if the re-scan below would flag a posted one.
+    shown = set(_scan_cache)
     try:
         fresh_candidates, _ = await asyncio.to_thread(run_scan)
         fresh_by_inode = {c.inode: c for c in fresh_candidates}
@@ -887,7 +899,7 @@ async def bulk_delete_orphans(
         if inode in handled:
             continue
         attempted += 1
-        candidate = fresh_by_inode.get(inode)
+        candidate = fresh_by_inode.get(inode) if inode in shown else None
         if candidate is None:
             skipped += 1
             continue
