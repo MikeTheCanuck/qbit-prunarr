@@ -21,7 +21,7 @@ Sonarr and Radarr hardlink downloads into the media library, and the two copies 
 
 - A file under `torrents/` or `usenet/` that shares an inode with something under `media/` is linked, which means it's fine.
 - **Unlinked Downloads**: download-side files with no media link, that no qBittorrent torrent and no Sonarr/Radarr queue item claims. These are usually safe to reclaim.
-- **Needs Review**: media-side files that aren't confirmed by *both* the relevant \*arr (Sonarr for TV, Radarr for movies) *and* Plex. These are genuinely ambiguous: a safe leftover duplicate, or real content that never got imported. Look before deleting.
+- **Needs Review**: media-side files that aren't confirmed by *both* the relevant \*arr (Sonarr for TV, Radarr for movies) *and* Plex. Each one gets a verdict saying what to do with it and why. Files Plex has attached as extras (a correctly placed `Featurettes/` file, say) move to their own read-only **Extras** tab instead, since Plex alone vouches for those.
 
 That first bullet only means something if your \*arrs hardlink on import. If they copy, see [Before you start](#before-you-start).
 
@@ -35,10 +35,15 @@ If one of the four isn't there at all (say you run Jellyfin instead of Plex), it
 
 ### Working through Needs Review
 
-- Grouped by movie or show folder, collapsible, biggest first. There's also a flat list.
-- A **Superseded** badge when Radarr tracks a different file in the same movie folder. Radarr never removes files it didn't import itself, so old copies outlive their replacements forever.
-- A warning badge when Radarr's tracked file for the movie is a *sample clip*. In that case the untracked file is probably the real movie. Fix it in Radarr; don't delete it.
-- Deleting a video also deletes its sidecars in the same folder: `Film.srt`, `Film.en.srt`, `Film.nfo`, `Film-thumb.jpg`. If another video shares the name, nothing is claimed.
+Rows are grouped by what to do with them:
+
+- **Probably junk**: sample clips, and older copies Radarr has replaced (Radarr never removes files it didn't import itself).
+- **Keep: Sonarr/Radarr wants it**: a special that matches, by title, an episode Sonarr lists as missing (the row names the exact `S00Exx` to import it as), a movie Radarr has no file for, or the real movie when Radarr is tracking its sample.
+- **Keep: Plex can't see it**: bonus material in a folder or under a name Plex ignores. The row gives the path to move it to.
+- **Identify it**: looks like a special, but nothing in Sonarr matched. Watch it and work out what it is.
+- **Your call**: no evidence either way.
+
+Delete is still there on every row, but on the two Keep groups it's greyed and asks first, and select-all skips them. Deleting a video also deletes its sidecars in the same folder: `Film.srt`, `Film.en.srt`, `Film.nfo`, `Film-thumb.jpg`. If another video shares the name, nothing is claimed.
 
 ### Deleting
 
@@ -153,7 +158,6 @@ Design notes and implementation plans live in `docs/`.
 
 - Only one qBittorrent tag on the cold-torrent page.
 - Scans are on demand. Nothing runs on a schedule, and results live in memory until the next scan or restart.
-- TV extras and specials that Sonarr hasn't matched still land in Needs Review. Teaching it Plex's extras conventions and Sonarr's Season 00 is the next piece of work.
 - Built for one person's NAS. It'll work on yours if your stack and layout match the ones above, but it hasn't been tested anywhere else.
 
 ## Contributing

@@ -123,6 +123,27 @@
     .needs-review h2 { color: var(--warn-text); margin-top: 20px; }
     .needs-review .section-subtitle { color: var(--warn-text); opacity: 0.85; }
     .needs-review table { background: var(--panel-bg); }
+    .verdict-action { font-weight: 600; margin-top: 3px; }
+    .verdict-reason { font-size: 12.5px; color: var(--text-muted); margin-top: 2px; }
+    .verdict-junk { color: #f5b8bb; } .verdict-wanted { color: #9cc3f5; } .verdict-plex { color: #a6dcb3; }
+    .verdict-identify { color: #c9b8f5; } .verdict-call { color: var(--warn-text); }
+    button.keep-delete { background: #4a4d54; color: var(--text-muted); }
+    button.keep-delete:hover { background: var(--danger); color: #fff; }
+    .bucket-title { font-weight: 700; font-size: 16px; }
+    tbody.folder-head .bucket-title + .folder-meta { margin-left: 12px; }
+    .bucket-sub { color: var(--text-muted); font-size: 13px; font-weight: 400; margin: 3px 0 0 26px; }
+    tbody.folder-head.bucket-junk td { border-top-color: #c8302a; } tbody.folder-head.bucket-junk .bucket-title { color: #f5b8bb; }
+    tbody.folder-head.bucket-wanted td { border-top-color: #5a8fd9; } tbody.folder-head.bucket-wanted .bucket-title { color: #9cc3f5; }
+    tbody.folder-head.bucket-plex td { border-top-color: #2f8f5b; } tbody.folder-head.bucket-plex .bucket-title { color: #a6dcb3; }
+    tbody.folder-head.bucket-identify td { border-top-color: #8c6ad9; } tbody.folder-head.bucket-identify .bucket-title { color: #c9b8f5; }
+    .tabs button.extras-tab[aria-selected="true"] { border-top-color: #2f8f5b; color: #a6dcb3; }
+    .tabs button.extras-tab[aria-selected="true"] .tab-count { background: #2f8f5b; }
+    .extras-box { background: #1b2a21; border: 2px solid #2f5a3c; border-radius: 6px; padding: 4px 20px 20px; }
+    .extras-box h2 { color: #a6dcb3; margin-top: 20px; }
+    .extras-box .section-subtitle { color: #a6dcb3; opacity: 0.85; }
+    tbody.extras-head td { background: var(--header-bg); color: #a6dcb3; font-weight: 600; padding-top: 10px; border-top: 2px solid #2f5a3c; }
+    tbody.extras-head .folder-meta { color: var(--text-muted); font-weight: 400; margin-left: 12px; }
+    #extras-table tr.extras-file td:first-child { padding-left: 32px; color: var(--text-muted); }
   </style>
 </head>
 <body>
@@ -161,6 +182,10 @@
       <span class="tab-count">{{ download_units | length }} · {{ "%.1f" % (download_bytes / 1e9) }} GB</span>{% endif %}</button>
     <button type="button" role="tab" data-tab="review" class="review-tab">Needs Review{% if scanned %}
       <span class="tab-count">{{ review_candidates | length }} · {{ "%.1f" % (review_bytes / 1e9) }} GB</span>{% endif %}</button>
+    {% set extras_count = extras_groups | sum(attribute="count") %}
+    {% set extras_bytes = extras_groups | sum(attribute="size_bytes") %}
+    <button type="button" role="tab" data-tab="extras" class="extras-tab">Extras{% if scanned %}
+      <span class="tab-count">{{ extras_count }} · {{ "%.1f" % (extras_bytes / 1e9) }} GB</span>{% endif %}</button>
   </nav>
 
   {% if not scanned %}
@@ -198,12 +223,12 @@
   <section class="tab-panel" data-panel="review" role="tabpanel">
   <div class="needs-review">
     <h2>Needs Review</h2>
-    <p class="section-subtitle">Not in your library: Sonarr, Radarr and Plex don't know about these files. Two likely explanations: it's a safe duplicate already tracked elsewhere, or it's real content that never got imported. Check each one before deleting — don't assume either way.</p>
+    <p class="section-subtitle">Files Sonarr, Radarr and Plex don't account for, sorted by what to do about them. Each row says what to do and why.</p>
     <form method="post" action="/orphans/delete" id="review-form">
       <div class="review-actions">
         <button type="submit" id="review-delete-btn" disabled>Delete selected</button>
         <p class="sort-modes">Show:
-          <button type="button" class="sort-mode" data-mode="folder">Grouped by folder</button>
+          <button type="button" class="sort-mode" data-mode="verdict">Grouped by what to do</button>
           <button type="button" class="sort-mode" data-mode="flat">Flat list</button></p>
         <p class="folder-all"><button type="button" class="sort-mode" data-folders="expand">Expand all</button>
           <button type="button" class="sort-mode" data-folders="collapse">Collapse all</button></p>
@@ -218,12 +243,30 @@
           </tr>
         </thead>
         {% for c in review_candidates %}
-          <tbody class="orphan-unit" data-path="{{ c.display_path }}" data-size-bytes="{{ c.size_bytes }}">
+          <tbody class="orphan-unit" data-verdict="{{ c.verdict or 'call' }}" data-path="{{ c.display_path }}" data-size-bytes="{{ c.size_bytes }}">
             {% include "_orphan_row.html" %}
           </tbody>
         {% endfor %}
       </table>
     </form>
+  </div>
+  </section>
+
+  <section class="tab-panel" data-panel="extras" role="tabpanel">
+  <div class="extras-box">
+    <h2>Extras</h2>
+    <p class="section-subtitle">Plex has these attached as extras to a movie or show, so they're kept on purpose. Listed for reference only: nothing here can be deleted from this page.</p>
+    {% if extras_groups %}
+    <table id="extras-table">
+      <thead><tr><th>Path</th><th>Size</th></tr></thead>
+      {% for g in extras_groups %}
+      <tbody class="extras-head"><tr><td colspan="2">{{ g.folder }}/<span class="folder-meta">{{ g.count }} extra{{ 's' if g.count != 1 }} · {{ g.size_gb }} GB</span></td></tr></tbody>
+      <tbody>{% for f in g.files %}<tr class="extras-file"><td>{{ f.name }}</td><td>{{ f.size_gb }} GB</td></tr>{% endfor %}</tbody>
+      {% endfor %}
+    </table>
+    {% elif scanned %}
+    <p class="not-scanned">No Plex extras among the files this scan found.</p>
+    {% endif %}
   </div>
   </section>
 </div>
@@ -242,100 +285,91 @@
   // Review tables sort independently of each other.
   var sortStates = {
     'download-table': { column: 'size', dir: 'desc' },
-    // Needs Review defaults to grouping by parent folder: orphans from one
-    // show or movie (a whole season of extras, say) need one decision
-    // together, not scattered by size among everything else.
-    'review-table': { column: 'folder', dir: 'asc' }
+    // Needs Review defaults to grouping by verdict: files that need the
+    // same decision sit together, not scattered by size.
+    'review-table': { column: 'verdict', dir: 'asc' }
   };
   try {
     var savedMode = localStorage.getItem('orphans-review-mode');
     if (savedMode === 'flat') { sortStates['review-table'] = { column: 'size', dir: 'desc' }; }
   } catch (e) {}
 
-  // Group by the movie or show folder (media/<library>/<Title>), not the
-  // immediate parent: a show's extras spread across Season and Featurette
-  // subfolders belong to one decision.
-  function titleFolder(path) {
-    var parts = path.split('/');
-    if (parts.length > 3 && parts[0] === 'media') { return parts.slice(0, 3).join('/'); }
-    return parentDir(path);
-  }
-
-  function parentDir(path) {
-    var i = path.lastIndexOf('/');
-    return i > 0 ? path.slice(0, i) : '';
-  }
+  // Needs Review groups by verdict: what to do with each file. Order is
+  // the decision order: clear-cut deletes first, the files to keep next,
+  // the ones needing a look last.
+  var BUCKETS = [
+    { kind: 'junk', title: 'Probably junk', sub: "Safe to delete once you've glanced at the reason." },
+    { kind: 'wanted', title: 'Keep: Sonarr/Radarr wants it', sub: 'Real content your library is missing. Import it instead of deleting it.' },
+    { kind: 'plex', title: "Keep: Plex can't see it", sub: 'Bonus material in a place or under a name Plex ignores. Moving it makes it show up as an extra.' },
+    { kind: 'identify', title: 'Identify it', sub: 'Looks like a special, but nothing matched. Watch it, then rename it or treat it as an extra.' },
+    { kind: 'call', title: 'Your call', sub: 'No evidence either way.' }
+  ];
+  // Keep buckets get no select-all: ticking a whole "keep this" group by
+  // accident is exactly the mistake this view exists to prevent.
+  var KEEP = { wanted: true, plex: true };
 
   function formatGB(bytes) { return (bytes / 1e9).toFixed(2) + ' GB'; }
 
-  // Folder mode: units sorted by folder (biggest folder first), each folder
-  // introduced by a header row with its file count and total size.
-  function applyFolderGrouping(table, units) {
-    var folders = {};
+  function applyVerdictGrouping(table, units) {
+    var byKind = {};
     units.forEach(function (u) {
-      var dir = titleFolder(u.dataset.path || '');
-      (folders[dir] = folders[dir] || { units: [], bytes: 0 }).units.push(u);
-      folders[dir].bytes += parseInt(u.dataset.sizeBytes, 10) || 0;
+      var kind = u.dataset.verdict || 'call';
+      u.dataset.folder = kind;
+      (byKind[kind] = byKind[kind] || []).push(u);
     });
     var cols = table.querySelectorAll('thead th').length;
-    Object.keys(folders)
-      .sort(function (a, b) { return folders[b].bytes - folders[a].bytes || (a < b ? -1 : 1); })
-      .forEach(function (dir) {
-        var f = folders[dir];
-        var head = document.createElement('tbody');
-        head.className = 'folder-head';
-        head.dataset.folder = dir;
-        var row = head.insertRow();
-        var cbCell = row.insertCell();
-        var folderCb = document.createElement('input');
-        folderCb.type = 'checkbox';
-        folderCb.className = 'folder-cb';
-        folderCb.title = 'Select every file in this folder';
-        cbCell.appendChild(folderCb);
-        var cell = row.insertCell();
-        cell.colSpan = cols - 1;
-        var toggle = document.createElement('button');
-        toggle.type = 'button';
-        toggle.className = 'folder-toggle';
-        toggle.innerHTML = '<span class="group-chevron">&#9654;</span>';
-        cell.appendChild(toggle);
-        cell.appendChild(document.createTextNode((dir || '(top level)') + '/'));
-        var meta = document.createElement('span');
-        meta.className = 'folder-meta';
-        meta.textContent = f.units.length + (f.units.length === 1 ? ' file · ' : ' files · ') + formatGB(f.bytes);
-        cell.appendChild(meta);
-        // Same badges as the rows, so a collapsed folder still shows them.
-        var superseded = f.units.filter(function (u) { return u.querySelector('.superseded'); }).length;
-        if (superseded) {
-          var sb = document.createElement('span');
-          sb.className = 'superseded';
-          sb.textContent = superseded === f.units.length ? 'All superseded' : superseded + ' superseded';
-          cell.appendChild(sb);
-        }
-        if (f.units.some(function (u) { return u.querySelector('.tracks-sample'); })) {
-          var tb = document.createElement('span');
-          tb.className = 'tracks-sample';
-          tb.textContent = 'Radarr is tracking a sample';
-          cell.appendChild(tb);
-        }
-        f.units.forEach(function (u) { u.dataset.folder = dir; });
-        setFolderOpen(table, head, f.units, openFolders().has(dir));
-        table.appendChild(head);
-        f.units
-          .sort(function (a, b) { return a.dataset.path < b.dataset.path ? -1 : 1; })
-          .forEach(function (u) { table.appendChild(u); });
-        refreshFolderState(table, dir);
-      });
+    var closed = closedBuckets();
+    BUCKETS.forEach(function (b) {
+      var members = byKind[b.kind];
+      if (!members) { return; }
+      var bytes = members.reduce(function (n, u) { return n + (parseInt(u.dataset.sizeBytes, 10) || 0); }, 0);
+      var head = document.createElement('tbody');
+      head.className = 'folder-head bucket-' + b.kind;
+      head.dataset.folder = b.kind;
+      var row = head.insertRow();
+      var cbCell = row.insertCell();
+      if (!KEEP[b.kind]) {
+        var cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.className = 'folder-cb';
+        cb.title = 'Select every file in this group';
+        cbCell.appendChild(cb);
+      }
+      var cell = row.insertCell();
+      cell.colSpan = cols - 1;
+      var toggle = document.createElement('button');
+      toggle.type = 'button';
+      toggle.className = 'folder-toggle';
+      toggle.innerHTML = '<span class="group-chevron">&#9654;</span>';
+      cell.appendChild(toggle);
+      var title = document.createElement('span');
+      title.className = 'bucket-title';
+      title.textContent = b.title;
+      cell.appendChild(title);
+      var meta = document.createElement('span');
+      meta.className = 'folder-meta';
+      meta.textContent = members.length + (members.length === 1 ? ' file · ' : ' files · ') + formatGB(bytes);
+      cell.appendChild(meta);
+      var sub = document.createElement('div');
+      sub.className = 'bucket-sub';
+      sub.textContent = b.sub;
+      cell.appendChild(sub);
+      setFolderOpen(table, head, members, !closed.has(b.kind));
+      table.appendChild(head);
+      members
+        .sort(function (a, c) { return a.dataset.path < c.dataset.path ? -1 : 1; })
+        .forEach(function (u) { table.appendChild(u); });
+      refreshFolderState(table, b.kind);
+    });
   }
 
-  // Which folders are expanded, by path, so a rescan or reload keeps them.
-  // Folders start collapsed: one line each until you open them.
-  var OPEN_KEY = 'orphans-review-open';
-  function openFolders() {
-    try { return new Set(JSON.parse(localStorage.getItem(OPEN_KEY)) || []); } catch (e) { return new Set(); }
+  // Buckets start open; remember the ones you close, so a rescan keeps them.
+  var CLOSED_KEY = 'orphans-review-closed';
+  function closedBuckets() {
+    try { return new Set(JSON.parse(localStorage.getItem(CLOSED_KEY)) || []); } catch (e) { return new Set(); }
   }
-  function saveOpenFolders(set) {
-    try { localStorage.setItem(OPEN_KEY, JSON.stringify(Array.from(set))); } catch (e) {}
+  function saveClosedBuckets(set) {
+    try { localStorage.setItem(CLOSED_KEY, JSON.stringify(Array.from(set))); } catch (e) {}
   }
   function setFolderOpen(table, head, units, open) {
     head.classList.toggle('expanded', open);
@@ -343,28 +377,27 @@
   }
   function toggleFolder(head, open) {
     var table = head.closest('table');
-    var dir = head.dataset.folder;
-    setFolderOpen(table, head, folderUnits(table, dir), open);
-    var set = openFolders();
-    if (open) { set.add(dir); } else { set.delete(dir); }
-    saveOpenFolders(set);
+    var kind = head.dataset.folder;
+    setFolderOpen(table, head, folderUnits(table, kind), open);
+    var set = closedBuckets();
+    if (open) { set.delete(kind); } else { set.add(kind); }
+    saveClosedBuckets(set);
   }
 
-  function folderUnits(table, dir) {
+  function folderUnits(table, kind) {
     return Array.prototype.filter.call(table.querySelectorAll(':scope > tbody.orphan-unit'),
-      function (u) { return u.dataset.folder === dir; });
+      function (u) { return u.dataset.folder === kind; });
   }
 
-  // Same tri-state as the group headers: checked when every file in the
-  // folder is ticked, "some" (indeterminate) when only part of it is.
-  function refreshFolderState(table, dir) {
+  // Tri-state bucket checkbox, same as group headers. Keep buckets have none.
+  function refreshFolderState(table, kind) {
     var head = Array.prototype.find.call(table.querySelectorAll(':scope > tbody.folder-head'),
-      function (h) { return h.dataset.folder === dir; });
-    if (!head) { return; }
+      function (h) { return h.dataset.folder === kind; });
+    var folderCb = head && head.querySelector('.folder-cb');
+    if (!folderCb) { return; }
     var cbs = [];
-    folderUnits(table, dir).forEach(function (u) { cbs.push.apply(cbs, u.querySelectorAll('.orphan-cb')); });
+    folderUnits(table, kind).forEach(function (u) { cbs.push.apply(cbs, u.querySelectorAll('.orphan-cb')); });
     var checked = cbs.filter(function (c) { return c.checked; }).length;
-    var folderCb = head.querySelector('.folder-cb');
     folderCb.checked = checked > 0 && checked === cbs.length;
     folderCb.indeterminate = checked > 0 && checked < cbs.length;
   }
@@ -387,12 +420,12 @@
     var units = Array.prototype.slice.call(table.querySelectorAll(':scope > tbody.orphan-unit'));
     table.querySelectorAll(':scope > tbody.folder-head').forEach(function (h) { h.remove(); });
     units.forEach(function (u) { u.classList.remove('folder-hidden'); });
-    table.classList.toggle('folder-mode', state.column === 'folder');
+    table.classList.toggle('folder-mode', state.column === 'verdict');
     document.querySelectorAll('.sort-mode').forEach(function (b) {
-      b.classList.toggle('active', (b.dataset.mode === 'folder') === (state.column === 'folder'));
+      b.classList.toggle('active', (b.dataset.mode === 'verdict') === (state.column === 'verdict'));
     });
-    if (state.column === 'folder') {
-      applyFolderGrouping(table, units);
+    if (state.column === 'verdict') {
+      applyVerdictGrouping(table, units);
       table.querySelectorAll('th[data-sort]').forEach(function (th) { th.classList.remove('sort-asc', 'sort-desc'); });
       return;
     }
@@ -443,9 +476,9 @@
 
   document.addEventListener('click', function (e) {
     var btn = e.target.closest('.sort-mode');
-    if (!btn) { return; }
-    sortStates['review-table'] = btn.dataset.mode === 'folder'
-      ? { column: 'folder', dir: 'asc' } : { column: 'size', dir: 'desc' };
+    if (!btn || !btn.dataset.mode) { return; }
+    sortStates['review-table'] = btn.dataset.mode === 'verdict'
+      ? { column: 'verdict', dir: 'asc' } : { column: 'size', dir: 'desc' };
     try { localStorage.setItem('orphans-review-mode', btn.dataset.mode); } catch (e2) {}
     applySort('review-table');
   });
@@ -511,7 +544,7 @@
       syncGroupCheckbox(e.target);
     }
     if (e.target.id === 'select-all-review') {
-      document.querySelectorAll('#review-table .orphan-cb, #review-table .folder-cb').forEach(function (cb) {
+      document.querySelectorAll('#review-table .orphan-cb:not(.keep-cb), #review-table .folder-cb').forEach(function (cb) {
         cb.checked = e.target.checked;
         cb.indeterminate = false;
       });
@@ -541,7 +574,9 @@
   function activeTableId() {
     var active = document.querySelector('.tab-panel.active');
     if (!active) { return null; }
-    return active.dataset.panel === 'review' ? 'review-table' : 'download-table';
+    if (active.dataset.panel === 'review') { return 'review-table'; }
+    if (active.dataset.panel === 'download') { return 'download-table'; }
+    return null;
   }
   function refreshSticky() {
     var bar = document.getElementById('sticky-delete');

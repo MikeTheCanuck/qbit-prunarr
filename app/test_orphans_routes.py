@@ -137,7 +137,7 @@ def test_download_and_review_candidates_render_in_separate_tables(tmp_path):
     assert 'id="select-all-review"' in response.text
 
     assert "Needs Review" in response.text
-    assert "safe duplicate" in response.text and "never got imported" in response.text
+    assert "sorted by what to do about them" in response.text
 
 
 def test_scan_returns_200_with_inline_error_on_unexpected_failure(tmp_path):
@@ -946,9 +946,64 @@ def test_tabs_show_no_counts_before_a_scan():
     assert "Not scanned yet" in response.text
 
 
-def test_needs_review_offers_folder_grouping():
+def test_needs_review_offers_verdict_grouping():
     response = TestClient(app).get("/orphans")
-    assert 'data-mode="folder"' in response.text and 'data-mode="flat"' in response.text
+    assert 'data-mode="verdict"' in response.text and 'data-mode="flat"' in response.text
+
+
+def test_extras_tab_exists_without_counts_before_a_scan():
+    response = TestClient(app).get("/orphans")
+    assert 'data-tab="extras"' in response.text
+    assert 'data-panel="extras"' in response.text
+    assert 'class="tab-count"' not in response.text
+
+
+def test_keep_rows_guard_their_delete(tmp_path):
+    response = _scan_with(tmp_path, _plex_with_extras())
+    review = _table_region(response.text, "review-table")
+    trailer_row = review[review.index("Extras/Trailer.mkv") - 600: review.index("Extras/Trailer.mkv") + 1500]
+    assert "keep-cb" in trailer_row
+    assert "The suggestion is to keep" in trailer_row
+
+
+def test_plex_confirmed_extra_moves_to_extras_tab(tmp_path):
+    response = _scan_with(tmp_path, _plex_with_extras({f"{FILM}/Featurettes/Making Of.mkv"}))
+    review = _table_region(response.text, "review-table")
+    extras = _table_region(response.text, "extras-table")
+    assert "Making Of.mkv" not in review
+    assert "Making Of.mkv" in extras
+    assert "Trailer.mkv" in review
+
+
+def test_review_rows_carry_their_verdict(tmp_path):
+    response = _scan_with(tmp_path, _plex_with_extras())
+    review = _table_region(response.text, "review-table")
+    assert 'data-verdict="junk"' in review          # film-sample.mkv
+    assert 'data-verdict="plex"' in review          # Extras/Trailer.mkv
+    assert "Move to Film (2020)/Trailers/Trailer.mkv" in review
+
+
+def test_sonarr_series_folder_with_prefix_and_trailing_slash_still_maps(tmp_path, monkeypatch):
+    import os
+    monkeypatch.setenv("SONARR_PATH_PREFIX", "/data")
+    root = str(tmp_path)
+    _make_file(os.path.join(root, "media", "tv", "Show", "Season 01", "ep1.mkv"))
+    _make_file(os.path.join(root, "media", "tv", "Show", "Show.S01E00.The.Pilot.Story.mkv"))
+    sonarr = _mock_client(
+        get_all_episode_paths={"/data/media/tv/Show/Season 01/ep1.mkv"}, get_all_queue_paths=set(),
+        get_series=[{"id": 3, "title": "Show", "path": "/data/media/tv/Show/"}],
+        get_missing_specials=[{"code": "S00E01", "title": "The Pilot Story", "monitored": True}],
+    )
+    plex = _mock_client(get_all_movie_paths=set(), get_all_episode_paths={"media/tv/Show/Season 01/ep1.mkv"},
+                        get_movie_files={}, get_episode_files={"media/tv/Show/Season 01/ep1.mkv": ["1", "2"]},
+                        get_extra_paths=set())
+    with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
+         patch("main.SonarrClient", return_value=sonarr), \
+         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set(), get_all_queue_paths=set(), get_movies=[])), \
+         patch("main.PlexClient", return_value=plex):
+        response = TestClient(app).post("/orphans/scan")
+    # Jinja autoescapes the title's quotes in the rendered row.
+    assert 'Import as S00E01 &#34;The Pilot Story&#34;' in _table_region(response.text, "review-table")
 
 
 def test_review_form_has_its_own_bulk_delete_button(tmp_path):
