@@ -111,3 +111,20 @@ def test_get_all_queue_paths_follows_pagination(client: RadarrClient, httpx_mock
     assert len(paths) == 251
     assert "/movies/m0.mkv" in paths
     assert "/movies/m250.mkv" in paths
+
+
+def test_get_movies_returns_folder_title_year_and_has_file(client: RadarrClient, httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        method="GET",
+        url=f"{BASE_URL}/api/v3/movie",
+        json=[
+            {"title": "Crystal Lake Memories", "year": 2013, "path": "/data/media/movies/Crystal Lake"},
+            {"title": "Gambit", "year": 1966, "path": "/data/media/movies/Gambit",
+             "movieFile": {"path": "/data/media/movies/Gambit/Gambit.mkv"}},
+        ],
+    )
+
+    assert client.get_movies() == [
+        {"path": "/data/media/movies/Crystal Lake", "title": "Crystal Lake Memories", "year": 2013, "has_file": False},
+        {"path": "/data/media/movies/Gambit", "title": "Gambit", "year": 1966, "has_file": True},
+    ]
