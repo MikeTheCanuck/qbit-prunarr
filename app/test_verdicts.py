@@ -277,3 +277,48 @@ def test_file_already_in_one_extras_folder_stays_put():
 
 def test_extras_target_none_without_a_slash():
     assert extras_target("x.mkv", TV) is None
+
+
+def test_title_folder_name_never_makes_a_file_a_sample():
+    # The title's own "Sample" is not a sample marker, in a folder or a stem.
+    for p, size in (("media/movies/Free Sample (2020)/Featurettes/Deleted/Scene.mkv", 200_000_000),
+                    ("media/tv/Sample Show/Season 1/Sample.Show.S01E01.mkv", 250_000_000)):
+        v = assign_verdict(_c(p, size=size), _ctx())
+        assert v.kind != "junk", p
+
+
+def test_title_words_in_a_subfolder_name_are_not_a_sample_marker():
+    # Small TV episodes are routine; a season folder repeating the title
+    # mustn't turn all of them into junk.
+    v = assign_verdict(_c("media/tv/Sample Show/Sample Show S01/Sample.Show.S01E02.mkv", size=300_000_000), _ctx())
+    assert v.kind != "junk"
+
+
+def test_big_file_in_an_extras_folder_is_not_the_missing_radarr_movie():
+    movies = {"media/movies/Alien (1979)": RadarrMovie("Alien", 1979, False)}
+    making = assign_verdict(_c("media/movies/Alien (1979)/Extras/Making of Alien.mkv", size=3_000_000_000),
+                            _ctx(radarr_movies=movies))
+    beast = assign_verdict(_c("media/movies/Alien (1979)/Bonus Disc/The Beast Within.mkv", size=3_000_000_000),
+                           _ctx(radarr_movies=movies))
+    assert making.kind == "plex" and making.action == "Move to Alien (1979)/Behind The Scenes/Making of Alien.mkv"
+    assert beast.kind == "plex" and beast.action == "Move to Alien (1979)/Featurettes/The Beast Within.mkv"
+
+
+def test_file_already_in_a_plex_extras_folder_is_left_where_it_is():
+    for p in ("media/movies/Film (2020)/Featurettes/Making Of.mkv", "media/movies/Film/Trailers/Teaser.mkv",
+              "media/tv/Firefly/Featurettes/Gag Reel.mkv"):
+        v = assign_verdict(_c(p), _ctx())
+        assert v.kind == "plex" and v.action == "Leave it where it is.", p
+        assert "didn't confirm it this scan" in v.reason
+
+
+def test_file_in_a_regular_season_folder_never_matches_a_special():
+    assert _code("media/tv/Firefly/Season 1/Firefly.S01.Serenity.mkv", FIREFLY) is None
+    assert _code("media/tv/Firefly/season 01/Serenity.mkv", FIREFLY) is None
+    # Season 0 is the specials folder: still matched by title.
+    assert _code("media/tv/Firefly/Season 0/Serenity.mkv", FIREFLY) == "S00E01"
+
+
+def test_nxnn_episode_code_never_matches_a_special():
+    # Without the guard the title-at-end rule would take this as S00E02.
+    assert _code("media/tv/Firefly/Firefly 1x02 Done the Impossible.mkv", FIREFLY) is None

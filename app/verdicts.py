@@ -60,6 +60,10 @@ _NOISE = re.compile(
 _REGULAR_EPISODE = re.compile(r"s(?!00)\d+e(?!00)\d+", re.I)
 _FILE_SEASON = re.compile(r"\bs(\d+)(?:e\d+)?\b", re.I)
 _TITLE_SEASON = re.compile(r"\bseason (\d+)\b", re.I)
+# A regular season's own folder ("Season 1", "season 01"), and the
+# 1x01-style episode code some releases use instead of S01E01.
+_SEASON_DIR = re.compile(r"season\s*0*([1-9]\d*)", re.I)
+_NXNN_EPISODE = re.compile(r"\b\d{1,2}x\d{2,3}\b", re.I)
 
 
 def _words(text: str) -> list[str]:
@@ -84,7 +88,11 @@ def match_sonarr_special(path: str, specials: SeriesSpecials) -> MissingSpecial 
     the file's words, so one shared word can't drag in an unrelated file.
     """
     name = path.rsplit("/", 1)[-1].rsplit(".", 1)[0]
-    if _REGULAR_EPISODE.search(name):
+    if _REGULAR_EPISODE.search(name) or _NXNN_EPISODE.search(name):
+        return None
+    # A file sitting in a regular season's folder is that season's episode
+    # (or its bonus), even without an SxxEyy code in its name.
+    if _SEASON_DIR.fullmatch(os.path.basename(os.path.dirname(path)).strip()):
         return None
     series_tokens = set(_words(specials.series)) - _STOP
     file_season = _FILE_SEASON.search(name)
@@ -143,13 +151,58 @@ def _word(word: str, text: str) -> bool:
 _SAMPLE_STEM = re.compile(r"(?:^|[.\-_(\[])sample(?:$|[.\-_)\]])", re.I)
 
 
+def _title_words(folder: str) -> set[str]:
+    return set(re.findall(r"[a-z0-9]+", os.path.basename(folder).lower()))
+
+
+def _without_words(text: str, words: set[str]) -> str:
+    """text with each of words (whole words, any case) blanked out; the
+    delimiters around them stay put."""
+    for w in words:
+        text = re.sub(rf"(?<![a-z0-9]){re.escape(w)}(?![a-z0-9])", " ", text, flags=re.I)
+    return text
+
+
+def _below_title(path: str) -> tuple[str, list[str], str]:
+    """(title folder, the directories between it and the file, file name)."""
+    folder = title_folder(path)
+    rest = path[len(folder) + 1:] if path.startswith(folder + "/") else os.path.basename(path)
+    *dirs, name = rest.split("/")
+    return folder, dirs, name
+
+
 def _is_sample_path(path: str) -> bool:
-    """A release's preview clip: "sample" as a whole word in a folder name,
-    or delimited in the file stem (a bare space doesn't count, so an episode
-    titled "The Sample" isn't caught)."""
-    dirs = path.split("/")[:-1]
-    stem = os.path.splitext(os.path.basename(path))[0]
-    return any(_word("sample", d) for d in dirs) or bool(_SAMPLE_STEM.search(stem))
+    """A release's preview clip: "sample" as a whole word in a folder below
+    the title's folder, or delimited in the file stem (a bare space doesn't
+    count, so an episode titled "The Sample" isn't caught). The title's own
+    words never count: "Free Sample (2020)" and "Sample Show" are titles."""
+    folder, dirs, name = _below_title(path)
+    title = _title_words(folder)
+    stem = _without_words(os.path.splitext(name)[0], title)
+    return any(_word("sample", _without_words(d, title)) for d in dirs) or bool(_SAMPLE_STEM.search(stem))
+
+
+def _is_extras_dir(d: str) -> bool:
+    d = d.lower()
+    return d in _PLEX_EXTRAS_DIRS or "extras" in d or "bonus" in d
+
+
+def _in_extras_dir(path: str) -> bool:
+    """Somewhere below the title's folder in an extras-like folder
+    (Featurettes/, Extras/, Bonus Disc/...): bonus material, not the title."""
+    if _is_loose(path):
+        return False
+    _, dirs, _ = _below_title(path)
+    return any(_is_extras_dir(d) for d in dirs)
+
+
+def _in_one_plex_extras_dir(path: str) -> bool:
+    """Directly inside exactly one Plex extras folder in the title's folder,
+    e.g. Film (2020)/Featurettes/Making Of.mkv: where Plex looks for extras."""
+    if _is_loose(path):
+        return False
+    _, dirs, _ = _below_title(path)
+    return len(dirs) == 1 and dirs[0].lower() in _PLEX_EXTRAS_DIRS
 
 
 def _is_loose(path: str) -> bool:
@@ -182,14 +235,13 @@ def extras_target(path: str, tv_subdirs: set[str]) -> str | None:
     """
     if "/" not in path or _is_loose(path):
         return None
-    folder = title_folder(path)
-    *dirs, name = path[len(folder) + 1:].split("/")
-    if len(dirs) == 1 and dirs[0].lower() in _PLEX_EXTRAS_DIRS:
+    if _in_one_plex_extras_dir(path):
         return None  # already directly inside one Plex extras folder
-    odd_dir = any(d.lower() in _PLEX_EXTRAS_DIRS or "extras" in d.lower() or "bonus" in d.lower() for d in dirs)
+    folder, dirs, name = _below_title(path)
+    odd_dir = any(_is_extras_dir(d) for d in dirs)
     # The title's own words (Trailer Park Boys, Interview with the Vampire)
     # aren't evidence of an extra.
-    title_words = set(re.findall(r"[a-z0-9]+", os.path.basename(folder).lower()))
+    title_words = _title_words(folder)
     bare = " ".join(w for w in re.findall(r"[a-z0-9]+", name.lower()) if w not in title_words)
     keyword = any(_word(k, bare) for k in _EXTRAS_KEYWORDS)
     if not (odd_dir or keyword):
@@ -244,7 +296,10 @@ def assign_verdict(c: OrphanCandidate, ctx: VerdictContext) -> Verdict:
             if own and f"S00E{int(own.group(1)):02d}" != ep.code:
                 reason += f" The file calls itself S00E{int(own.group(1)):02d}; go by the title."
             return Verdict("wanted", action, reason)
-    if not tv and ctx.radarr_movies is not None and c.size_bytes > RADARR_WANTED_MIN_BYTES:
+    # A big file in the movie's Extras/ or Bonus Disc/ is bonus material,
+    # not the missing movie itself.
+    if not tv and ctx.radarr_movies is not None and c.size_bytes > RADARR_WANTED_MIN_BYTES \
+            and not _in_extras_dir(path):
         movie = ctx.radarr_movies.get(folder)
         if movie and not movie.has_file:
             year = f" ({movie.year})" if movie.year else ""
@@ -255,6 +310,10 @@ def assign_verdict(c: OrphanCandidate, ctx: VerdictContext) -> Verdict:
         return Verdict("plex", f"Move to {target}",
                        "Bonus material, but Plex only finds extras directly inside a Featurettes/, "
                        "Trailers/ (etc.) folder in the title's own folder.")
+    if _in_one_plex_extras_dir(path):
+        return Verdict("plex", "Leave it where it is.",
+                       "Already in a Plex extras folder, but Plex didn't confirm it this scan "
+                       "(the extras check failed, or Plex needs a metadata refresh).")
     if tv and looks_special(path):
         if ctx.specials is None:
             reason = "Looks like a special, but Sonarr couldn't be checked this scan."

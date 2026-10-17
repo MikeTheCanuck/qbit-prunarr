@@ -961,7 +961,8 @@ def test_extras_tab_exists_without_counts_before_a_scan():
 def test_keep_rows_guard_their_delete(tmp_path):
     response = _scan_with(tmp_path, _plex_with_extras())
     review = _table_region(response.text, "review-table")
-    trailer_row = review[review.index("Extras/Trailer.mkv") - 600: review.index("Extras/Trailer.mkv") + 1500]
+    at = review.index("Extras/Trailer.mkv")
+    trailer_row = review[review.rindex("<tr", 0, at): review.index("</tr>", at)]
     assert "keep-cb" in trailer_row
     assert "The suggestion is to keep" in trailer_row
 
