@@ -1049,3 +1049,61 @@ def test_deleting_a_review_video_takes_its_sidecars_but_nothing_else(tmp_path, m
     assert "plus 1 subtitle/metadata file" in page.text
     assert "media/movies/Film/Old.srt" in page.text
     assert "DELETED media/movies/Film/Old.srt (30 bytes)" in audit.read_text()
+
+
+FILM = "media/movies/Film (2020)"
+
+
+def _plex_with_extras(extra_paths=(), raises=False):
+    plex = _mock_client(
+        get_all_movie_paths={f"{FILM}/Film.mkv"}, get_all_episode_paths=set(),
+        get_movie_files={f"{FILM}/Film.mkv": ["7"]}, get_episode_files={},
+        get_extra_paths=set(extra_paths),
+    )
+    if raises:
+        plex.get_extra_paths.side_effect = RuntimeError("plex 500 on one key")
+    return plex
+
+
+def _scan_with(tmp_path, plex, sonarr=None, radarr=None):
+    import os
+    root = str(tmp_path)
+    _make_file(os.path.join(root, *FILM.split("/"), "Film.mkv"))
+    _make_file(os.path.join(root, *FILM.split("/"), "Featurettes", "Making Of.mkv"))
+    _make_file(os.path.join(root, *FILM.split("/"), "Extras", "Trailer.mkv"))
+    _make_file(os.path.join(root, *FILM.split("/"), "film-sample.mkv"))
+    with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
+         patch("main.SonarrClient", return_value=sonarr or _mock_client(get_all_episode_paths=set(), get_all_queue_paths=set())), \
+         patch("main.RadarrClient", return_value=radarr or _mock_client(
+             get_all_movie_paths={f"{FILM}/Film.mkv"}, get_all_queue_paths=set(), get_movies=[])), \
+         patch("main.PlexClient", return_value=plex):
+        return TestClient(app).post("/orphans/scan")
+
+
+def test_confirmed_extra_is_never_in_the_scan_cache(tmp_path):
+    import os
+    _scan_with(tmp_path, _plex_with_extras({f"{FILM}/Featurettes/Making Of.mkv"}))
+    inode = os.stat(os.path.join(str(tmp_path), *FILM.split("/"), "Featurettes", "Making Of.mkv")).st_ino
+    assert inode not in main._scan_cache
+    assert any("Making Of.mkv" in c.paths[0] for c in main._extras_cache)
+
+
+def test_bulk_delete_of_an_extra_skips_it(tmp_path):
+    import os
+    path = os.path.join(str(tmp_path), *FILM.split("/"), "Featurettes", "Making Of.mkv")
+    plex = _plex_with_extras({f"{FILM}/Featurettes/Making Of.mkv"})
+    _scan_with(tmp_path, plex)
+    with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
+         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set(), get_all_queue_paths=set())), \
+         patch("main.RadarrClient", return_value=_mock_client(
+             get_all_movie_paths={f"{FILM}/Film.mkv"}, get_all_queue_paths=set(), get_movies=[])), \
+         patch("main.PlexClient", return_value=plex):
+        TestClient(app).post("/orphans/delete", data={"inodes": [str(os.stat(path).st_ino)]}, follow_redirects=False)
+    assert os.path.exists(path)
+
+
+def test_failed_extras_lookup_keeps_everything_in_review(tmp_path):
+    response = _scan_with(tmp_path, _plex_with_extras(raises=True))
+    review = _table_region(response.text, "review-table")
+    assert "Making Of.mkv" in review
+    assert "Plex extras: not checked" in _swapped_region(response.text)
