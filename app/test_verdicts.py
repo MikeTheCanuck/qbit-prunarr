@@ -112,3 +112,143 @@ def test_odd_characters_do_not_crash():
 
 def test_empty_missing_list_matches_nothing():
     assert _code("media/tv/Firefly/S00E01 - Serenity.mkv", SeriesSpecials("Firefly", ())) is None
+
+
+from orphans import OrphanCandidate
+from verdicts import RadarrMovie, VerdictContext, assign_verdict, extras_target, looks_special
+
+TV = {"media/tv", "media/tv-no-backup"}
+
+
+def _c(path, size=100_000_000, **kw):
+    return OrphanCandidate(inode=1, paths=[path], category="orphaned media", size_bytes=size, **kw)
+
+
+def _ctx(specials=None, radarr_movies=None, radarr_paths=None):
+    return VerdictContext(tv_subdirs=TV, specials=specials if specials is not None else {},
+                          radarr_movies=radarr_movies if radarr_movies is not None else {},
+                          radarr_paths=radarr_paths if radarr_paths is not None else set())
+
+
+def test_extras_target_flattens_nested_tv_extras_into_featurettes():
+    assert extras_target("media/tv/Firefly/Featurettes/Deleted Scenes/S01E01 Serenity - Scene 75 & 76.mkv", TV) == \
+        "Firefly/Featurettes/S01E01 Serenity - Scene 75 & 76.mkv"
+
+
+def test_extras_target_picks_movie_folder_by_keyword():
+    assert extras_target("media/movies/Gambit.1966/Extras/Trailer.mkv", TV) == "Gambit.1966/Trailers/Trailer.mkv"
+    assert extras_target("media/movies/H3/H3.Extras-Grym/On-set.Interviews.with.Barker-Grym.mkv", TV) == \
+        "H3/Interviews/On-set.Interviews.with.Barker-Grym.mkv"
+    assert extras_target("media/movies/H3/H3.Extras-Grym/Hell.on.Earth-The.Story.of.Hellraiser.III-Grym.mkv", TV) == \
+        "H3/Behind The Scenes/Hell.on.Earth-The.Story.of.Hellraiser.III-Grym.mkv"
+
+
+def test_extras_target_uses_bonus_keyword_in_a_show_folder():
+    assert extras_target("media/tv/Larry Sanders/LARRY SANDERS BONUS 1.mp4", TV) == "Larry Sanders/Featurettes/LARRY SANDERS BONUS 1.mp4"
+
+
+def test_extras_target_none_for_plain_files_loose_files_and_already_placed():
+    assert extras_target("media/movies/Film/Film.mkv", TV) is None
+    assert extras_target("media/tv/Schoolhouse_Rock.mp4", TV) is None
+    assert extras_target("media/movies/Film/Trailers/Trailer.mkv", TV) is None
+
+
+def test_looks_special_uses_codes_names_and_the_immediate_parent_only():
+    assert looks_special("media/tv/Supernatural/Supernatural.S15E00.The.Long.Road.Home.mkv")
+    assert looks_special("media/tv/SCTV/specials/Softball Game.mp4")
+    assert looks_special("media/tv/Wellington/Wellington.Paranormal.S02.Xmas.Special.2019.mkv")
+    assert not looks_special("media/tv/Firefly/Featurettes/Specials/Serenity (2005)/Featurettes/Outtakes.mkv")
+
+
+def test_small_sample_is_junk():
+    v = assign_verdict(_c("media/movies/IM3/Sample,Screens/IM3 (Sample).mkv", size=85_000_000), _ctx())
+    assert v.kind == "junk" and v.action == "Delete it."
+
+
+def test_sample_radarr_tracks_gets_rescan_advice():
+    p = "media/movies/IM3/Sample,Screens/IM3 (Sample).mkv"
+    v = assign_verdict(_c(p, size=85_000_000), _ctx(radarr_paths={p}))
+    assert "Rescan" in v.reason
+
+
+def test_big_file_with_sample_in_title_is_not_junk():
+    v = assign_verdict(_c("media/movies/Free Sample (2020)/Free Sample.mkv", size=4_000_000_000), _ctx())
+    assert v.kind != "junk"
+
+
+def test_superseded_is_junk_and_names_the_tracked_file():
+    v = assign_verdict(_c("media/movies/Film/Film.WEBRip.mkv", superseded_by="Film.BluRay.mkv"), _ctx())
+    assert v.kind == "junk" and "Film.BluRay.mkv" in v.reason
+
+
+def test_tracks_sample_is_wanted():
+    v = assign_verdict(_c("media/movies/IM3/IM3.mkv", tracks_sample=True), _ctx())
+    assert v.kind == "wanted"
+
+
+def test_sonarr_match_is_wanted_with_code_and_title():
+    from verdicts import MissingSpecial, SeriesSpecials
+    specials = {"media/tv/Supernatural": SeriesSpecials("Supernatural", (
+        MissingSpecial("S00E09", "Supernatural: The Long Road Home", False),))}
+    v = assign_verdict(_c("media/tv/Supernatural/Supernatural.S15E00.The.Long.Road.Home.mkv"), _ctx(specials=specials))
+    assert v.kind == "wanted"
+    assert 'S00E09 "Supernatural: The Long Road Home"' in v.action
+    assert "monitoring" in v.action
+
+
+def test_wrong_own_code_is_called_out():
+    from verdicts import MissingSpecial, SeriesSpecials
+    specials = {"media/tv/SCTV": SeriesSpecials("Second City Television", (
+        MissingSpecial("S00E07", "The Shmenges: The Last Polka", True),))}
+    v = assign_verdict(_c("media/tv/SCTV/Specials/S00E10 - The Shmenges_ The Last Polka.mp4"), _ctx(specials=specials))
+    assert "S00E10" in v.reason
+
+
+def test_sonarr_match_beats_plex_move():
+    from verdicts import MissingSpecial, SeriesSpecials
+    specials = {"media/tv/Larry Sanders": SeriesSpecials("The Larry Sanders Show", (
+        MissingSpecial("S00E17", "Interview with Jeremy Piven", True),))}
+    v = assign_verdict(_c("media/tv/Larry Sanders/LARRY SANDERS S01 bonus - interview Jeremy Piven.mp4"), _ctx(specials=specials))
+    assert v.kind == "wanted"
+
+
+def test_radarr_movie_without_a_file_is_wanted():
+    movies = {"media/movies/Crystal Lake": RadarrMovie("Crystal Lake Memories", 2013, False)}
+    v = assign_verdict(_c("media/movies/Crystal Lake/Crystal Lake - pt1.mp4", size=4_700_000_000), _ctx(radarr_movies=movies))
+    assert v.kind == "wanted" and '"Crystal Lake Memories (2013)"' in v.action
+
+
+def test_nested_extra_is_plex_with_target():
+    v = assign_verdict(_c("media/tv/Firefly/Featurettes/Specials/Serenity (2005)/Featurettes/Outtakes.mkv"), _ctx())
+    assert v.kind == "plex" and v.action == "Move to Firefly/Featurettes/Outtakes.mkv"
+
+
+def test_sample_in_an_extras_folder_is_still_junk():
+    v = assign_verdict(_c("media/movies/Film/Extras/film-sample.mkv", size=20_000_000), _ctx())
+    assert v.kind == "junk"
+
+
+def test_unmatched_special_is_identify_and_says_why():
+    from verdicts import SeriesSpecials
+    specials = {"media/tv/Wellington Paranormal": SeriesSpecials("Wellington Paranormal", ())}
+    p = "media/tv/Wellington Paranormal/Wellington.Paranormal.S02.Xmas.Special.2019.mkv"
+    assert "none of Sonarr's" in assign_verdict(_c(p), _ctx(specials=specials)).reason
+    assert "no series" in assign_verdict(_c(p), _ctx(specials={})).reason
+    assert "couldn't be checked" in assign_verdict(_c(p), VerdictContext(TV, None, {}, set())).reason
+
+
+def test_loose_file_at_library_root_is_your_call_with_advice():
+    v = assign_verdict(_c("media/tv/South.Park.S14E14.Creme.Fraiche.avi"), _ctx())
+    assert v.kind == "call" and "Loose file" in v.reason
+
+
+def test_everything_else_is_your_call():
+    v = assign_verdict(_c("media/tv/SCTV Network 90/S04E03 - SCTV Network 90 - #108.m4v"), _ctx())
+    assert v == assign_verdict(_c("media/tv/SCTV Network 90/S04E03 - SCTV Network 90 - #108.m4v"), _ctx())
+    assert v.kind == "call" and v.action == "Your call."
+
+
+def test_missing_radarr_data_never_produces_a_radarr_verdict():
+    v = assign_verdict(_c("media/movies/Crystal Lake/Crystal Lake - pt1.mp4", size=4_700_000_000),
+                       VerdictContext(TV, {}, None, None))
+    assert v.kind == "call"

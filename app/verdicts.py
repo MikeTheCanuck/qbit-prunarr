@@ -7,8 +7,11 @@ Before loosening any matching rule here, read the 2026-10-11 Reasoning
 Captures in CLAUDE.md: every guard below exists because of a real false
 match on the live library.
 """
+import os
 import re
 from dataclasses import dataclass
+
+from orphans import OrphanCandidate, is_tv_path, title_folder
 
 
 @dataclass(frozen=True)
@@ -109,3 +112,138 @@ def match_sonarr_special(path: str, specials: SeriesSpecials) -> MissingSpecial 
         if score > 0.5 and score > best_score:
             best, best_score = ep, score
     return best
+
+
+SAMPLE_MAX_BYTES = 500_000_000
+RADARR_WANTED_MIN_BYTES = 1_000_000_000
+_PLEX_EXTRAS_DIRS = {
+    "behind the scenes", "deleted scenes", "featurettes", "interviews",
+    "scenes", "shorts", "trailers", "other",
+}
+_EXTRAS_KEYWORDS = ("bonus", "outtakes", "introduction", "trailer", "interview", "gag")
+_SPECIALS_DIRS = {"specials", "season 00", "season 0"}
+
+
+@dataclass
+class VerdictContext:
+    tv_subdirs: set[str]
+    # Title folder ("media/tv/Firefly") -> that series' missing specials.
+    # A folder is present iff Sonarr has a series there. None: not checked.
+    specials: dict[str, SeriesSpecials] | None
+    # Movie folder -> Radarr's record. None: Radarr not checked.
+    radarr_movies: dict[str, RadarrMovie] | None
+    # Radarr's tracked files. None: Radarr not checked.
+    radarr_paths: set[str] | None
+
+
+def _word(word: str, text: str) -> bool:
+    return re.search(rf"(?<![a-z]){word}(?![a-z])", text.lower()) is not None
+
+
+def _is_loose(path: str) -> bool:
+    """Directly in a library root, e.g. media/tv/x.avi: in no title's folder."""
+    return path.count("/") == 2
+
+
+def looks_special(path: str) -> bool:
+    """S00Exx or SxxE00 in the name, "special" as a word, or sitting
+    directly in a Specials/Season 00 folder. Only the immediate parent
+    counts: Firefly keeps a movie's featurettes in a folder nested under
+    Specials/, and those aren't specials."""
+    name = os.path.basename(path)
+    parent = os.path.basename(os.path.dirname(path)).lower()
+    return bool(
+        re.search(r"s00e\d+", name, re.I)
+        or re.search(r"s\d+e00(?!\d)", name, re.I)
+        or parent in _SPECIALS_DIRS
+        or _word("special", name)
+    )
+
+
+def extras_target(path: str, tv_subdirs: set[str]) -> str | None:
+    """Where Plex would pick this file up as an extra, shown relative to the
+    library root (e.g. "Firefly/Featurettes/x.mkv"), or None.
+
+    Only a suggestion: a name rule never confirms an extra (see CLAUDE.md).
+    TV goes to <Show>/Featurettes/, the one TV placement proven on the
+    live library; movies get the folder Plex's docs give for the kind.
+    """
+    if _is_loose(path):
+        return None
+    folder = title_folder(path)
+    *dirs, name = path[len(folder) + 1:].split("/")
+    odd_dir = any(d.lower() in _PLEX_EXTRAS_DIRS or "extras" in d.lower() or "bonus" in d.lower() for d in dirs)
+    keyword = any(_word(k, name) for k in _EXTRAS_KEYWORDS)
+    if not (odd_dir or keyword):
+        return None
+    if is_tv_path(path, tv_subdirs):
+        sub = "Featurettes"
+    else:
+        plain = re.sub(r"[^a-z0-9]+", " ", name.lower())
+        sub = (
+            "Trailers" if "trailer" in plain
+            else "Interviews" if "interview" in plain
+            else "Deleted Scenes" if "deleted" in plain
+            else "Behind The Scenes" if "making" in plain or "story of" in plain
+            else "Featurettes"
+        )
+    if path == f"{folder}/{sub}/{name}":
+        return None
+    return f"{os.path.basename(folder)}/{sub}/{name}"
+
+
+def assign_verdict(c: OrphanCandidate, ctx: VerdictContext) -> Verdict:
+    """First matching rule wins; the order is the spec's. A rule whose data
+    wasn't fetched (None in ctx) never fires, so missing data only ever
+    pushes a file toward "Your call", never toward "junk"."""
+    path = c.paths[0]
+    folder = title_folder(path)
+    tv = any(is_tv_path(p, ctx.tv_subdirs) for p in c.paths)
+
+    if c.size_bytes < SAMPLE_MAX_BYTES and _word("sample", path):
+        reason = "A preview clip from the release, not the real thing."
+        if ctx.radarr_paths is not None and any(p in ctx.radarr_paths for p in c.paths):
+            reason += (" Radarr is tracking this sample as the movie, so after deleting it,"
+                       " run a Rescan in Radarr so it picks up the real file.")
+        return Verdict("junk", "Delete it.", reason)
+    if c.superseded_by:
+        return Verdict("junk", "Delete it (older copy).",
+                       f"Radarr tracks a different file in this folder: {c.superseded_by}")
+    if c.tracks_sample:
+        return Verdict("wanted",
+                       "Keep it: this is probably the real movie. Delete the sample Radarr tracks, then run a Rescan in Radarr.",
+                       "Radarr's file for this movie is a sample clip.")
+    if tv and ctx.specials is not None and folder in ctx.specials:
+        ep = match_sonarr_special(path, ctx.specials[folder])
+        if ep:
+            action = f'Import as {ep.code} "{ep.title}" with Manual Import in Sonarr.'
+            if not ep.monitored:
+                action += " Turn monitoring on for it first."
+            reason = f'Sonarr lists {ep.code} "{ep.title}" as missing, and this file\'s name matches it.'
+            own = re.search(r"s00e(\d+)", os.path.basename(path), re.I)
+            if own and f"S00E{int(own.group(1)):02d}" != ep.code:
+                reason += f" The file calls itself S00E{int(own.group(1)):02d}; go by the title."
+            return Verdict("wanted", action, reason)
+    if not tv and ctx.radarr_movies is not None and c.size_bytes > RADARR_WANTED_MIN_BYTES:
+        movie = ctx.radarr_movies.get(folder)
+        if movie and not movie.has_file:
+            year = f" ({movie.year})" if movie.year else ""
+            return Verdict("wanted", f'Get it into Radarr as "{movie.title}{year}" with Manual Import.',
+                           "Radarr has this movie but no file for it.")
+    target = extras_target(path, ctx.tv_subdirs)
+    if target:
+        return Verdict("plex", f"Move to {target}",
+                       "Bonus material, but Plex only finds extras directly inside a Featurettes/, "
+                       "Trailers/ (etc.) folder in the title's own folder.")
+    if tv and looks_special(path):
+        if ctx.specials is None:
+            reason = "Looks like a special, but Sonarr couldn't be checked this scan."
+        elif folder not in ctx.specials:
+            reason = "Looks like a special, but Sonarr has no series in this folder."
+        else:
+            reason = "Looks like a special, but none of Sonarr's missing specials for this show matches the name."
+        return Verdict("identify", "Watch it and work out what it is.", reason)
+    if _is_loose(path):
+        return Verdict("call", "Move it into a show or movie folder, or delete it.",
+                       "Loose file at the top of the library. Sonarr, Radarr and Plex only see files inside a title's folder.")
+    return Verdict("call", "Your call.", "Nothing here says whether it's a duplicate or something worth keeping.")
