@@ -252,3 +252,28 @@ def test_missing_radarr_data_never_produces_a_radarr_verdict():
     v = assign_verdict(_c("media/movies/Crystal Lake/Crystal Lake - pt1.mp4", size=4_700_000_000),
                        VerdictContext(TV, {}, None, None))
     assert v.kind == "call"
+
+
+def test_episode_titled_sample_is_not_junk():
+    v = assign_verdict(_c("media/tv/Show/Season 1/S01E05 - The Sample.mkv", size=300_000_000), _ctx())
+    assert v.kind != "junk"
+
+
+def test_delimited_sample_names_are_junk():
+    for p in ("media/movies/Movie/Movie.2020.1080p-sample.mkv", "media/movies/Movie/sample.mkv"):
+        assert assign_verdict(_c(p, size=50_000_000), _ctx()).kind == "junk"
+
+
+def test_title_words_do_not_trigger_extras_keywords():
+    assert extras_target("media/tv/Trailer Park Boys/Season 1/Trailer Park Boys S01E01.mkv", TV) is None
+    assert extras_target("media/movies/Interview with the Vampire (1994)/Interview with the Vampire.mkv", TV) is None
+
+
+def test_file_already_in_one_extras_folder_stays_put():
+    assert extras_target("media/movies/Film/Trailers/Teaser.mkv", TV) is None
+    assert extras_target("media/movies/Film/Featurettes/Making Of.mkv", TV) is None
+    assert extras_target("media/tv/Firefly/Featurettes/Deleted Scenes/x.mkv", TV) == "Firefly/Featurettes/x.mkv"
+
+
+def test_extras_target_none_without_a_slash():
+    assert extras_target("x.mkv", TV) is None

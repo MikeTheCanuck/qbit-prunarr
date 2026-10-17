@@ -140,6 +140,18 @@ def _word(word: str, text: str) -> bool:
     return re.search(rf"(?<![a-z]){word}(?![a-z])", text.lower()) is not None
 
 
+_SAMPLE_STEM = re.compile(r"(?:^|[.\-_(\[])sample(?:$|[.\-_)\]])", re.I)
+
+
+def _is_sample_path(path: str) -> bool:
+    """A release's preview clip: "sample" as a whole word in a folder name,
+    or delimited in the file stem (a bare space doesn't count, so an episode
+    titled "The Sample" isn't caught)."""
+    dirs = path.split("/")[:-1]
+    stem = os.path.splitext(os.path.basename(path))[0]
+    return any(_word("sample", d) for d in dirs) or bool(_SAMPLE_STEM.search(stem))
+
+
 def _is_loose(path: str) -> bool:
     """Directly in a library root, e.g. media/tv/x.avi: in no title's folder."""
     return path.count("/") == 2
@@ -168,12 +180,18 @@ def extras_target(path: str, tv_subdirs: set[str]) -> str | None:
     TV goes to <Show>/Featurettes/, the one TV placement proven on the
     live library; movies get the folder Plex's docs give for the kind.
     """
-    if _is_loose(path):
+    if "/" not in path or _is_loose(path):
         return None
     folder = title_folder(path)
     *dirs, name = path[len(folder) + 1:].split("/")
+    if len(dirs) == 1 and dirs[0].lower() in _PLEX_EXTRAS_DIRS:
+        return None  # already directly inside one Plex extras folder
     odd_dir = any(d.lower() in _PLEX_EXTRAS_DIRS or "extras" in d.lower() or "bonus" in d.lower() for d in dirs)
-    keyword = any(_word(k, name) for k in _EXTRAS_KEYWORDS)
+    # The title's own words (Trailer Park Boys, Interview with the Vampire)
+    # aren't evidence of an extra.
+    title_words = set(re.findall(r"[a-z0-9]+", os.path.basename(folder).lower()))
+    bare = " ".join(w for w in re.findall(r"[a-z0-9]+", name.lower()) if w not in title_words)
+    keyword = any(_word(k, bare) for k in _EXTRAS_KEYWORDS)
     if not (odd_dir or keyword):
         return None
     if is_tv_path(path, tv_subdirs):
@@ -196,11 +214,13 @@ def assign_verdict(c: OrphanCandidate, ctx: VerdictContext) -> Verdict:
     """First matching rule wins; the order is the spec's. A rule whose data
     wasn't fetched (None in ctx) never fires, so missing data only ever
     pushes a file toward "Your call", never toward "junk"."""
+    # folder, target and matching use paths[0]; `tv` deliberately checks every
+    # path (any TV path disables the Radarr rule, the safe direction).
     path = c.paths[0]
     folder = title_folder(path)
     tv = any(is_tv_path(p, ctx.tv_subdirs) for p in c.paths)
 
-    if c.size_bytes < SAMPLE_MAX_BYTES and _word("sample", path):
+    if c.size_bytes < SAMPLE_MAX_BYTES and any(_is_sample_path(p) for p in c.paths):
         reason = "A preview clip from the release, not the real thing."
         if ctx.radarr_paths is not None and any(p in ctx.radarr_paths for p in c.paths):
             reason += (" Radarr is tracking this sample as the movie, so after deleting it,"
