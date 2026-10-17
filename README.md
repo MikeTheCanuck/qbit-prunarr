@@ -39,15 +39,17 @@ Rows are grouped by what to do with them:
 
 - **Probably junk**: sample clips, and older copies Radarr has replaced (Radarr never removes files it didn't import itself).
 - **Keep: Sonarr/Radarr wants it**: a special that matches, by title, an episode Sonarr lists as missing (the row names the exact `S00Exx` to import it as), a movie Radarr has no file for, or the real movie when Radarr is tracking its sample.
-- **Keep: Plex can't see it**: bonus material in a folder or under a name Plex ignores. The row gives the path to move it to.
-- **Identify it**: looks like a special, but nothing in Sonarr matched. Watch it and work out what it is.
+- **Keep: Plex can't see it**: bonus material in a folder or under a name Plex ignores. The row gives the path to move it to. A file already sitting in a `Featurettes/`-style folder that Plex didn't confirm this scan just says to leave it where it is.
+- **Identify it**: looks like a special, but Sonarr couldn't match it (or couldn't be checked). Watch it and work out what it is.
 - **Your call**: no evidence either way.
 
-Delete is still there on every row, but on the two Keep groups it's greyed and asks first, and select-all skips them. Deleting a video also deletes its sidecars in the same folder: `Film.srt`, `Film.en.srt`, `Film.nfo`, `Film-thumb.jpg`. If another video shares the name, nothing is claimed.
+If Plex's extras couldn't be checked this scan (Plex down, or the lookup failed), Needs Review says so at the top: some of what's there may be extras Plex already shows, and the Extras tab will be empty for the same reason.
+
+Delete is still there on every row, but on the two Keep groups it's greyed and asks first, and select-all skips them. Tick one by hand and the bulk confirm tells you how many suggested keeps are in the selection. Deleting a video also deletes its sidecars in the same folder: `Film.srt`, `Film.en.srt`, `Film.nfo`, `Film-thumb.jpg`. If another video shares the name, nothing is claimed.
 
 ### Deleting
 
-Single rows, whole groups (a fully orphaned folder), or a bulk selection on either tab. Before anything is removed, the app re-runs the scan and skips anything that's no longer an orphan. Empty parent folders are pruned up to, never past, the library root. A scan takes around 15 seconds on a large library, so deletes take about that long too. The button goes orange while that runs.
+Single rows, whole groups (a fully orphaned folder), or a bulk selection on Unlinked Downloads or Needs Review (Extras is read-only). Before anything is removed, the app re-runs the scan and skips anything that's no longer an orphan. Empty parent folders are pruned up to, never past, the library root. A scan takes around 15 seconds on a large library, so deletes take about that long too. The button goes orange while that runs.
 
 ### The delete log
 
