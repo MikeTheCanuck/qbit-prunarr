@@ -34,7 +34,14 @@
     #scan-btn { padding: 8px 16px; background: var(--accent); color: white; border: none; border-radius: 4px; cursor: pointer; }
     #scan-btn:hover:not(:disabled) { background: var(--accent-hover); }
     #scan-btn:disabled { background: #4a4d54; color: var(--text-muted); cursor: wait; }
-    #scan-spinner { margin-left: 10px; color: var(--text-muted); }
+    #scan-status { display: inline-block; margin-left: 12px; padding: 7px 14px; border-radius: 4px; font-weight: 600;
+      background: var(--header-bg); color: var(--text); border-left: 4px solid var(--accent); }
+    #scan-status .scan-busy { display: none; }
+    #scan-status.scanned { display: none; }
+    /* Scanning goes orange, like an in-flight delete: still happening. */
+    #scan-status.htmx-request { display: inline-block; background: var(--busy); color: #1f2126; border-left-color: #1f2126; }
+    #scan-status.htmx-request .scan-idle { display: none; }
+    #scan-status.htmx-request .scan-busy { display: inline; }
     #bulk-delete-btn { padding: 8px 16px; background: var(--danger); color: white; border: none; border-radius: 4px; cursor: pointer; }
     #bulk-delete-btn:disabled { background: #4a4d54; color: var(--text-muted); cursor: default; }
     button[hx-delete] { padding: 4px 10px; background: var(--danger); color: white; border: none; border-radius: 4px; cursor: pointer; }
@@ -157,10 +164,15 @@
     <ul>{% for p in deleted_paths %}<li>{{ p }}</li>{% endfor %}</ul></details>{% endif %}
 </div>{% endif %}
 <button id="scan-btn" hx-post="/orphans/scan" hx-target="#scan-results" hx-swap="outerHTML" hx-select="#scan-results"
-        hx-indicator="#scan-spinner" hx-disabled-elt="this">
+        hx-select-oob="#scan-status" hx-indicator="#scan-status" hx-disabled-elt="this">
   Scan Now
 </button>
-<span id="scan-spinner" class="htmx-indicator">Scanning — this can take a while on a large library…</span>
+{# One status message for the whole scan: "Not scanned yet" before the first
+   scan, "Scanning…" while one runs (htmx adds .htmx-request), nothing after. #}
+<span id="scan-status"{% if scanned %} class="scanned"{% endif %}>
+  <span class="scan-idle">Not scanned yet. Press <b>Scan Now</b> to find orphans.</span>
+  <span class="scan-busy">Scanning — this can take a while on a large library…</span>
+</span>
 
 <div id="scan-results">
   {% if error %}<div class="error-banner">{{ error }}</div>{% endif %}
@@ -189,9 +201,6 @@
       <span class="tab-count">{{ extras_count }} · {{ "%.1f" % (extras_bytes / 1e9) }} GB</span>{% endif %}</button>
   </nav>
 
-  {% if not scanned %}
-  <p class="not-scanned">Not scanned yet. Press <b>Scan Now</b> to find orphans.</p>
-  {% endif %}
   <section class="tab-panel" data-panel="download" role="tabpanel">
   <h2>Unlinked Downloads</h2>
   <p class="section-subtitle">Not referenced by any active torrent — generally safe to reclaim.</p>

@@ -946,6 +946,30 @@ def test_tabs_show_no_counts_before_a_scan():
     assert "Not scanned yet" in response.text
 
 
+def test_scan_status_is_one_message_beside_the_button():
+    """'Not scanned yet' and 'Scanning…' share one element next to Scan Now,
+    so the page never shows a stale 'Not scanned yet' under the tabs while
+    a scan runs."""
+    html = TestClient(app).get("/orphans").text
+    status = html[html.index('id="scan-status"'):html.index('id="scan-results"')]
+    assert "Not scanned yet" in status
+    assert "Scanning" in status
+    assert html.count("Not scanned yet") == 1
+    assert 'hx-indicator="#scan-status"' in html
+    assert 'hx-select-oob="#scan-status"' in html
+
+
+def test_scan_status_hides_not_scanned_after_a_scan():
+    with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
+         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set(), get_all_queue_paths=set())), \
+         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set(), get_all_queue_paths=set())), \
+         patch("main.PlexClient", return_value=_mock_client(
+             get_all_movie_paths=set(), get_all_episode_paths=set()
+         )):
+        html = TestClient(app).post("/orphans/scan").text
+    assert 'id="scan-status" class="scanned"' in html
+
+
 def test_needs_review_offers_verdict_grouping():
     response = TestClient(app).get("/orphans")
     assert 'data-mode="verdict"' in response.text and 'data-mode="flat"' in response.text
