@@ -959,6 +959,26 @@ def test_scan_status_is_one_message_beside_the_button():
     assert 'hx-select-oob="#scan-status"' in html
 
 
+def test_expand_collapse_all_is_toggled_by_script_not_has():
+    """Firefox didn't re-evaluate a :has(+ #review-table.folder-mode) rule
+    when the script added the class, so the buttons never appeared. The
+    script now flips the hidden attribute itself."""
+    html = TestClient(app).get("/orphans").text
+    assert '<p class="folder-all" hidden>' in html
+    assert ":has(+ #review-table" not in html
+    assert "querySelector('.folder-all').hidden" in html
+
+
+def test_review_columns_have_fixed_widths():
+    """With every group collapsed only full-width header rows remain, so
+    Size and Delete drifted to the middle without explicit widths."""
+    html = TestClient(app).get("/orphans").text
+    assert "th.col-size" in html and "th.col-delete" in html
+    review = html[html.index('id="review-table"'):]
+    assert '<th class="sortable col-size" data-sort="size">Size</th>' in review
+    assert '<th class="col-delete">Delete</th>' in review
+
+
 def test_scan_status_hides_not_scanned_after_a_scan():
     with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
          patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set(), get_all_queue_paths=set())), \

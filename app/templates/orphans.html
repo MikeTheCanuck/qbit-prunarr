@@ -86,7 +86,11 @@
     .folder-toggle { background: none; border: none; color: var(--warn-text); cursor: pointer; padding: 0 8px 0 0; font-size: 1em; }
     tbody.folder-head.expanded .group-chevron { transform: rotate(90deg); }
     .review-actions .folder-all { margin: 0; }
-    .review-actions:has(+ #review-table:not(.folder-mode)) .folder-all { display: none; }
+    .review-actions .folder-all[hidden] { display: none; }
+    /* Fixed widths: with every group collapsed only full-width header rows
+       remain, and auto layout would drift Size and Delete to the middle. */
+    th.col-size { width: 7em; white-space: nowrap; }
+    th.col-delete { width: 6em; }
     #sticky-delete { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 20;
       display: flex; align-items: center; gap: 14px; padding: 10px 14px; border-radius: 10px;
       background: #3a2224; border: 2px solid var(--danger); box-shadow: 0 0 0 5px rgba(200,48,42,.28), 0 12px 34px rgba(0,0,0,.6);
@@ -212,8 +216,8 @@
         <tr>
           <th><input type="checkbox" id="select-all-download"></th>
           <th class="sortable" data-sort="path">Path</th>
-          <th class="sortable" data-sort="size">Size</th>
-          <th>Delete</th>
+          <th class="sortable col-size" data-sort="size">Size</th>
+          <th class="col-delete">Delete</th>
         </tr>
       </thead>
       {% for u in download_units %}
@@ -243,7 +247,7 @@
         <p class="sort-modes">Show:
           <button type="button" class="sort-mode" data-mode="verdict">Grouped by what to do</button>
           <button type="button" class="sort-mode" data-mode="flat">Flat list</button></p>
-        <p class="folder-all"><button type="button" class="sort-mode" data-folders="expand">Expand all</button>
+        <p class="folder-all" hidden><button type="button" class="sort-mode" data-folders="expand">Expand all</button>
           <button type="button" class="sort-mode" data-folders="collapse">Collapse all</button></p>
       </div>
       <table id="review-table">
@@ -251,8 +255,8 @@
           <tr>
             <th><input type="checkbox" id="select-all-review"></th>
             <th class="sortable" data-sort="path">Path</th>
-            <th class="sortable" data-sort="size">Size</th>
-            <th>Delete</th>
+            <th class="sortable col-size" data-sort="size">Size</th>
+            <th class="col-delete">Delete</th>
           </tr>
         </thead>
         {% for c in review_candidates %}
@@ -436,6 +440,9 @@
     table.querySelectorAll(':scope > tbody.folder-head').forEach(function (h) { h.remove(); });
     units.forEach(function (u) { u.classList.remove('folder-hidden'); });
     table.classList.toggle('folder-mode', state.column === 'verdict');
+    if (tableId === 'review-table') {
+      document.querySelector('.folder-all').hidden = state.column !== 'verdict';
+    }
     document.querySelectorAll('.sort-mode').forEach(function (b) {
       b.classList.toggle('active', (b.dataset.mode === 'verdict') === (state.column === 'verdict'));
     });
