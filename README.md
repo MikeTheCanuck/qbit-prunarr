@@ -35,17 +35,17 @@ If one of the four isn't there at all (say you run Jellyfin instead of Plex), it
 
 ### Working through Needs Review
 
-Rows are grouped by what to do with them:
+Needs Review shows one group at a time; pick one from the cards along the top. Rows are grouped by what to do with them:
 
 - **Probably junk**: sample clips, and older copies Radarr has replaced (Radarr never removes files it didn't import itself).
-- **Keep: Sonarr/Radarr wants it**: a special that matches, by title, an episode Sonarr lists as missing (the row names the exact `S00Exx` to import it as), a movie Radarr has no file for, or the real movie when Radarr is tracking its sample.
-- **Keep: Plex can't see it**: bonus material in a folder or under a name Plex ignores. The row gives the path to move it to. A file already sitting in a `Featurettes/`-style folder that Plex didn't confirm this scan just says to leave it where it is.
+- **Sonarr/Radarr wants it** (Keep): a special that matches, by title, an episode Sonarr lists as missing (the row names the exact `S00Exx` to import it as), a movie Radarr has no file for, or the real movie when Radarr is tracking its sample.
+- **Plex can't see it** (Keep): bonus material in a folder or under a name Plex ignores. The row gives the path to move it to. A file already sitting in a `Featurettes/`-style folder that Plex didn't confirm this scan just says to leave it where it is.
 - **Identify it**: looks like a special, but Sonarr couldn't match it (or couldn't be checked). Watch it and work out what it is.
 - **Your call**: no evidence either way.
 
 If Plex's extras couldn't be checked this scan (Plex down, or the lookup failed), Needs Review says so at the top: some of what's there may be extras Plex already shows, and the Extras tab will be empty for the same reason.
 
-Delete is still there on every row, but on the two Keep groups it's greyed and asks first, and select-all skips them. Tick one by hand and the bulk confirm tells you how many suggested keeps are in the selection. Deleting a video also deletes its sidecars in the same folder: `Film.srt`, `Film.en.srt`, `Film.nfo`, `Film-thumb.jpg`. If another video shares the name, nothing is claimed.
+Rows in the two Keep groups have no checkbox, so they can't be swept up in a bulk delete. If you really want one gone, it's under the row's `⋯` menu as **Delete anyway…**. Everything else is ticked and deleted from the bar at the bottom, which confirms with a list of exactly what's going. Deleting a video also deletes its sidecars in the same folder: `Film.srt`, `Film.en.srt`, `Film.nfo`, `Film-thumb.jpg`. If another video shares the name, nothing is claimed.
 
 ### Deleting
 
@@ -152,7 +152,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python -m pytest -q
 ```
 
-The tests mock qBittorrent, Sonarr, Radarr and Plex and build real files and hardlinks in a temp directory, so the scan and delete paths run against an actual filesystem. They don't run the page's JavaScript; selection, grouping and the sticky delete bar get checked by hand in a browser.
+The tests mock qBittorrent, Sonarr, Radarr and Plex and build real files and hardlinks in a temp directory, so the scan and delete paths run against an actual filesystem. They don't run the page's JavaScript; selection, the group cards, the delete bar and the confirm dialog get checked by hand in a browser.
 
 Design notes and implementation plans live in `docs/`.
 

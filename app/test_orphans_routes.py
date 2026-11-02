@@ -1370,3 +1370,35 @@ def test_review_table_has_no_delete_column():
 def test_copy_path_works_over_plain_http():
     html = TestClient(app).get("/orphans").text
     assert "execCommand('copy')" in html
+
+
+def test_review_deletes_confirm_in_a_styled_dialog():
+    html = TestClient(app).get("/orphans").text
+    dialog = html[html.index('<dialog id="delete-dialog"'):html.index("</dialog>")]
+    assert "Deleted files can't be recovered. Each one is re-checked first, and anything that has since shown up in Sonarr, Radarr or Plex is skipped." in dialog
+    assert ">Cancel<" in dialog and "autofocus" in dialog
+    assert "showModal()" in html
+    assert "The suggestion is to keep this file: " in html
+    assert "subtitle/metadata" in html
+
+
+def test_sticky_bar_has_clear_and_is_the_review_tabs_only_delete(tmp_path):
+    response = _scan_with(tmp_path, _plex_with_extras())
+    html = response.text
+    bar = html[html.index('id="sticky-delete"'):html.index("</div>", html.index('id="sticky-delete"'))]
+    assert 'id="sticky-clear"' in bar and ">Clear<" in bar
+    form = html[html.index('id="review-form"'):html.index("</form>", html.index('id="review-form"'))]
+    assert 'id="review-delete-btn"' in form and 'type="submit"' in form
+    assert '<button type="submit" id="review-delete-btn" hidden' in form
+
+
+def test_delete_anyway_goes_through_the_dialog_not_hx_confirm(tmp_path):
+    response = _scan_with(tmp_path, _plex_with_extras())
+    row = _review_row(_table_region(response.text, "review-table"), "Extras/Trailer.mkv")
+    assert 'class="delete-anyway"' in row and "hx-confirm" not in row and "hx-delete" not in row
+
+
+def test_review_confirm_no_longer_uses_native_confirm():
+    html = TestClient(app).get("/orphans").text
+    assert "None of them are in your library" not in html     # the old confirm() text
+    assert "confirm('Delete every selected file and folder?')" in html   # download tab unchanged

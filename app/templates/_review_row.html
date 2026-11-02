@@ -17,9 +17,7 @@
     <div class="menu">
       <button type="button" class="copy-path" data-path="{{ c.display_path }}">Copy path</button>
       {%- if c.keep %}
-      <button type="button" class="delete-anyway" data-inode="{{ c.inode }}"
-              hx-delete="/orphans/{{ c.inode }}" hx-target="#orphan-row-{{ c.inode }}" hx-swap="outerHTML" hx-params="none"
-              hx-confirm="The suggestion is to keep {{ c.display_path }}. Delete anyway?">Delete anyway…</button>
+      <button type="button" class="delete-anyway" data-inode="{{ c.inode }}">Delete anyway…</button>
       {%- endif %}
     </div>
   </td>

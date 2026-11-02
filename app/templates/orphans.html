@@ -77,7 +77,6 @@
     .done-banner { background: #1f3326; color: #a6dcb3; padding: 10px 16px; margin-bottom: 16px; border-radius: 4px; }
     #review-delete-btn { padding: 8px 16px; background: var(--danger); color: white; border: none; border-radius: 4px; cursor: pointer; }
     #review-delete-btn:disabled { background: #4a4d54; color: var(--text-muted); cursor: default; }
-    .review-actions { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin: 0 0 8px; }
     .superseded { display: inline-block; margin-left: 8px; font-size: 12px; padding: 1px 8px; border-radius: 10px;
       background: #1f3326; color: #a6dcb3; border: 1px solid #2f5a3c; white-space: nowrap; }
     /* Fixed widths, so Size and Delete line up between tables. */
@@ -86,6 +85,7 @@
     th.col-more { width: 44px; }
     /* Needs Review rows: name first, then where it is, then what to do. */
     #review-table td { vertical-align: top; }
+    #review-table th:first-child { width: 38px; }
     #review-table td.size { white-space: nowrap; text-align: right; color: var(--text-muted); }
     #review-table th.col-size { text-align: right; }
     #review-table .name { font-weight: 600; overflow-wrap: anywhere; }
@@ -106,15 +106,30 @@
       color: var(--text); padding: 7px 10px; border-radius: 4px; cursor: pointer; }
     .menu button:hover { background: var(--row-hover); }
     .menu button.delete-anyway { color: #f5b8bb; }
-    #sticky-delete { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 20;
-      display: flex; align-items: center; gap: 14px; padding: 10px 14px; border-radius: 10px;
-      background: #3a2224; border: 2px solid var(--danger); box-shadow: 0 0 0 5px rgba(200,48,42,.28), 0 12px 34px rgba(0,0,0,.6);
-      animation: sticky-in .25s ease-out;
+    /* The selection bar: neutral, with red kept for its Delete button. */
+    #sticky-delete { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 20;
+      display: flex; align-items: center; gap: 14px; padding: 10px 12px 10px 18px; border-radius: 10px;
+      background: #2d2f35; border: 1px solid #4a4d54; box-shadow: 0 12px 34px rgba(0,0,0,.6);
       color: var(--text); font-weight: 600; max-width: calc(100vw - 32px); }
     #sticky-delete[hidden] { display: none; }
-    @keyframes sticky-in { from { transform: translate(-50%, 24px); opacity: 0; } to { transform: translate(-50%, 0); opacity: 1; } }
-    #sticky-delete-btn { padding: 8px 16px; background: var(--danger); color: #fff; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; }
-    #sticky-delete-btn:hover { background: var(--danger-hover); }
+    #sticky-summary { white-space: nowrap; }
+    #sticky-clear, #dd-cancel { font: inherit; font-weight: 600; padding: 8px 16px; border-radius: 4px; cursor: pointer;
+      background: var(--panel-bg); color: var(--text); border: 1px solid var(--border); }
+    #sticky-clear:hover, #dd-cancel:hover { background: var(--row-hover); }
+    #sticky-delete-btn, #dd-ok { font: inherit; padding: 8px 16px; background: var(--danger); color: #fff; border: 1px solid var(--danger);
+      border-radius: 4px; cursor: pointer; font-weight: 600; }
+    #sticky-delete-btn:hover, #dd-ok:hover { background: var(--danger-hover); }
+    #delete-dialog { background: var(--panel-bg); color: var(--text); border: 1px solid var(--border); border-radius: 8px;
+      width: 620px; max-width: calc(100vw - 32px); padding: 0; box-shadow: 0 20px 60px rgba(0,0,0,.6); }
+    #delete-dialog::backdrop { background: rgba(0,0,0,.6); }
+    #delete-dialog h3 { margin: 0; padding: 14px 18px; border-bottom: 1px solid var(--border); font-size: 17px; }
+    #delete-dialog > p, #delete-dialog ul { margin: 12px 18px; }
+    #delete-dialog ul { padding-left: 20px; max-height: 220px; overflow: auto; font-size: 13px; }
+    #delete-dialog li { margin: 3px 0; overflow-wrap: anywhere; }
+    #delete-dialog li .s { color: var(--text-muted); }
+    .dd-keep { background: var(--warn-bg); border-left: 3px solid var(--warn-border); color: var(--warn-text); padding: 8px 12px; border-radius: 3px; }
+    .dd-warn { background: #3a2224; border-left: 3px solid var(--danger); padding: 8px 12px; font-size: 13.5px; border-radius: 3px; }
+    #delete-dialog footer { display: flex; justify-content: flex-end; gap: 10px; padding: 12px 18px; border-top: 1px solid var(--border); margin-top: 14px; }
     body { padding-bottom: 90px; }
     .sidecars { margin-left: 8px; font-size: 12px; color: var(--text-muted); white-space: nowrap; cursor: help; }
     .tracks-sample { display: inline-block; margin-left: 8px; font-size: 12px; padding: 1px 8px; border-radius: 10px;
@@ -280,9 +295,8 @@
     {% endfor %}
     {% endif %}
     <form method="post" action="/orphans/delete" id="review-form">
-      <div class="review-actions">
-        <button type="submit" id="review-delete-btn" disabled>Delete selected</button>
-      </div>
+      {# The bottom bar is the one visible Delete; it submits through this. #}
+      <button type="submit" id="review-delete-btn" hidden disabled>Delete selected</button>
       <table id="review-table">
         <thead>
           <tr>
@@ -327,8 +341,23 @@
 
 <div id="sticky-delete" hidden>
   <span id="sticky-summary"></span>
+  <button type="button" id="sticky-clear">Clear</button>
   <button type="button" id="sticky-delete-btn">Delete selected</button>
 </div>
+
+{# Needs Review's confirm: a real list of what's going, not a browser box. #}
+<dialog id="delete-dialog" aria-labelledby="dd-title">
+  <h3 id="dd-title"></h3>
+  <p class="dd-keep" hidden></p>
+  <p>These files will be removed:</p>
+  <ul id="dd-list"></ul>
+  <p class="dd-sidecars" hidden></p>
+  <p class="dd-warn">Deleted files can't be recovered. Each one is re-checked first, and anything that has since shown up in Sonarr, Radarr or Plex is skipped.</p>
+  <footer>
+    <button type="button" id="dd-cancel" autofocus>Cancel</button>
+    <button type="button" id="dd-ok" class="danger">Delete</button>
+  </footer>
+</dialog>
 
 <script>
   // Default sort: size descending, so the real space-hogs surface above
@@ -590,11 +619,11 @@
   document.addEventListener('htmx:afterSwap', refreshBulkButton);
   document.addEventListener('htmx:afterSwap', refreshReviewButton);
 
-  // Sticky bar: the top "Delete selected" scrolls away, so whenever the
-  // visible tab has a selection, show its count and size at the bottom.
-  // Its button just clicks the tab's real one, so the same confirm and
-  // busy handling apply. Group headers are skipped when counting: their
-  // children are ticked in lockstep and carry the sizes.
+  // The bottom bar: whenever the visible tab has a selection, show its
+  // count and size, plus Clear and the tab's Delete. On Needs Review it is
+  // the only Delete; ticks in other groups count too, since they still post.
+  // Group headers are skipped when counting: their children are ticked in
+  // lockstep and carry the sizes.
   function activeTableId() {
     var active = document.querySelector('.tab-panel.active');
     if (!active) { return null; }
@@ -602,41 +631,111 @@
     if (active.dataset.panel === 'download') { return 'download-table'; }
     return null;
   }
+  function pickedRows(id) {
+    return Array.prototype.filter.call(
+      document.querySelectorAll('#' + id + ' .orphan-cb:checked'),
+      function (cb) { return !cb.closest('tr.group-header'); }).map(function (cb) { return cb.closest('tr'); });
+  }
   function refreshSticky() {
     var bar = document.getElementById('sticky-delete');
     var id = activeTableId();
-    var picked = id ? Array.prototype.filter.call(
-      document.querySelectorAll('#' + id + ' .orphan-cb:checked'),
-      function (cb) { return !cb.closest('tr.group-header'); }) : [];
-    if (!picked.length) { bar.hidden = true; return; }
+    var rows = id ? pickedRows(id) : [];
+    if (!rows.length) { bar.hidden = true; return; }
     var bytes = 0;
-    picked.forEach(function (cb) { bytes += parseInt(cb.closest('tr').dataset.sizeBytes, 10) || 0; });
-    document.getElementById('sticky-summary').textContent =
-      picked.length + (picked.length === 1 ? ' file' : ' files') + ' selected · ' + formatGB(bytes);
+    rows.forEach(function (tr) { bytes += parseInt(tr.dataset.sizeBytes, 10) || 0; });
+    document.getElementById('sticky-summary').textContent = rows.length + ' selected · ' + formatGB(bytes);
+    var btn = document.getElementById('sticky-delete-btn');
+    if (!btn.classList.contains('busy')) {
+      btn.textContent = id === 'review-table'
+        ? 'Delete ' + rows.length + (rows.length === 1 ? ' file…' : ' files…') : 'Delete selected';
+    }
     bar.hidden = false;
   }
   document.addEventListener('change', refreshSticky);
   document.addEventListener('htmx:afterSwap', refreshSticky);
+  document.getElementById('sticky-clear').addEventListener('click', function () {
+    var id = activeTableId();
+    if (!id) { return; }
+    // Select-all lives in the table's own header, so this clears it too.
+    document.querySelectorAll('#' + id + ' input[type="checkbox"]').forEach(function (cb) {
+      cb.checked = false;
+      cb.indeterminate = false;
+    });
+    document.querySelectorAll('#' + id + ' tr.selected').forEach(function (tr) { tr.classList.remove('selected'); });
+    refreshSticky();
+    refreshBulkButton();
+    refreshReviewButton();
+  });
   document.getElementById('sticky-delete-btn').addEventListener('click', function () {
-    var real = document.getElementById(activeTableId() === 'review-table' ? 'review-delete-btn' : 'bulk-delete-btn');
+    if (activeTableId() === 'review-table') {
+      var reviewBtn = document.getElementById('review-delete-btn');
+      openDeleteDialog(pickedRows('review-table'), {
+        onConfirm: function () { reviewBtn.disabled = false; reviewBtn.form.requestSubmit(reviewBtn); }
+      });
+      return;
+    }
+    var real = document.getElementById('bulk-delete-btn');
     if (real && !real.disabled) { real.click(); }
   });
 
-  // Needs Review is the ambiguous category, so the confirm says so and
-  // names exactly how much is about to go.
-  document.addEventListener('click', function (e) {
-    if (e.target.id !== 'review-delete-btn') { return; }
-    var picked = document.querySelectorAll('#review-table .orphan-cb:checked');
+  // Needs Review's confirm lists exactly what is about to go. File names
+  // are untrusted, so the list is built with textContent only.
+  var pendingConfirm = null;
+  function openDeleteDialog(rows, opts) {
+    var dialog = document.getElementById('delete-dialog');
     var bytes = 0, sidecars = 0;
-    picked.forEach(function (cb) {
-      bytes += parseInt(cb.closest('tbody.orphan-unit').dataset.sizeBytes, 10) || 0;
-      sidecars += parseInt(cb.closest('tr').dataset.sidecars, 10) || 0;
+    var list = document.getElementById('dd-list');
+    list.textContent = '';
+    rows.forEach(function (tr) {
+      var size = parseInt(tr.dataset.sizeBytes, 10) || 0;
+      bytes += size;
+      sidecars += parseInt(tr.dataset.sidecars, 10) || 0;
+      var li = document.createElement('li');
+      li.textContent = tr.dataset.name + ' ';
+      var s = document.createElement('span');
+      s.className = 's';
+      s.textContent = '· ' + formatGB(size);
+      li.appendChild(s);
+      list.appendChild(li);
     });
-    var msg = 'Delete ' + picked.length + (picked.length === 1 ? ' file' : ' files') + ' (' + formatGB(bytes) + ')' +
-      (sidecars ? ', plus ' + sidecars + ' subtitle/metadata ' + (sidecars === 1 ? 'file' : 'files') + ' named after them' : '') +
-      '?' +
-      "\n\nNone of them are in your library (Sonarr, Radarr or Plex). Each one is re-checked first, and anything that has since shown up in the library is skipped.";
-    if (!confirm(msg)) { e.preventDefault(); return; }
+    document.getElementById('dd-title').textContent =
+      'Delete ' + rows.length + (rows.length === 1 ? ' file' : ' files') + ' (' + formatGB(bytes) + ')?';
+    var sc = dialog.querySelector('.dd-sidecars');
+    sc.hidden = !sidecars;
+    sc.textContent = 'Plus ' + sidecars + ' subtitle/metadata ' + (sidecars === 1 ? 'file' : 'files') + ' named after them.';
+    var keep = dialog.querySelector('.dd-keep');
+    keep.hidden = !opts.keep;
+    keep.textContent = 'The suggestion is to keep this file: ' + (rows[0] ? rows[0].dataset.action : '');
+    document.getElementById('dd-ok').textContent = opts.keep ? 'Delete anyway' : 'Delete';
+    pendingConfirm = opts.onConfirm;
+    dialog.showModal();
+  }
+  document.getElementById('dd-cancel').addEventListener('click', function () {
+    pendingConfirm = null;
+    document.getElementById('delete-dialog').close();
+  });
+  document.getElementById('dd-ok').addEventListener('click', function () {
+    var run = pendingConfirm;
+    pendingConfirm = null;
+    document.getElementById('delete-dialog').close();
+    if (run) { run(); }
+  });
+
+  // A keep row's "Delete anyway…" goes through the same dialog, then
+  // sends that row's single-file delete.
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest('.delete-anyway');
+    if (!btn) { return; }
+    btn.closest('.more').classList.remove('open');
+    var tr = btn.closest('tr');
+    var inode = btn.dataset.inode;
+    openDeleteDialog([tr], {
+      keep: true,
+      onConfirm: function () {
+        tr.classList.add('deleting');
+        htmx.ajax('DELETE', '/orphans/' + inode, { target: '#orphan-row-' + inode, swap: 'outerHTML' });
+      }
+    });
   });
 
   // Both bulk forms do a full page post that takes ~15s or more (re-scan,
