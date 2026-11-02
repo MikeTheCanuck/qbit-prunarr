@@ -1398,6 +1398,20 @@ def test_delete_anyway_goes_through_the_dialog_not_hx_confirm(tmp_path):
     assert 'class="delete-anyway"' in row and "hx-confirm" not in row and "hx-delete" not in row
 
 
+def test_clicks_inside_a_row_menu_keep_it_open():
+    """The close-on-outside-click handler ran first and hid the menu, so
+    Copy path's "Copied" was written to a button nobody could see."""
+    html = TestClient(app).get("/orphans").text
+    assert "if (e.target.closest('.menu')) { return; }" in html
+
+
+def test_delete_anyway_ignores_a_row_already_deleting():
+    """A second confirm while the ~15s re-check runs would send a second
+    DELETE whose "skipped" row overwrites the first one's "Deleted" row."""
+    html = TestClient(app).get("/orphans").text
+    assert "if (tr.classList.contains('deleting')) { return; }" in html
+
+
 def test_review_confirm_no_longer_uses_native_confirm():
     html = TestClient(app).get("/orphans").text
     assert "None of them are in your library" not in html     # the old confirm() text

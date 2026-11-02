@@ -462,6 +462,8 @@
 
   // Row ⋯ menus: one open at a time, closed by any click outside.
   document.addEventListener('click', function (e) {
+    // Menu items close their own menu, after showing feedback like "Copied".
+    if (e.target.closest('.menu')) { return; }
     var btn = e.target.closest('.more-btn');
     document.querySelectorAll('.more.open').forEach(function (m) {
       if (!btn || m !== btn.parentNode) { m.classList.remove('open'); }
@@ -728,6 +730,7 @@
     if (!btn) { return; }
     btn.closest('.more').classList.remove('open');
     var tr = btn.closest('tr');
+    if (tr.classList.contains('deleting')) { return; }
     var inode = btn.dataset.inode;
     openDeleteDialog([tr], {
       keep: true,
