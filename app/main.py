@@ -4,6 +4,7 @@ import hashlib
 import logging
 from datetime import datetime
 import os
+import re
 import time
 from html import escape
 from typing import Optional
@@ -499,11 +500,25 @@ def _status_lines(statuses: dict[str, str]) -> list[str]:
     return lines
 
 
+def _review_title(display_path: str) -> tuple[str, str]:
+    """(readable name, folder) for a Needs Review row. Release names with
+    no spaces get their dots and underscores turned into spaces; the
+    folder drops the top-level library folder ("media")."""
+    parts = display_path.split("/")
+    name = os.path.splitext(parts[-1])[0]
+    if " " not in name:
+        name = re.sub(r"[._]+", " ", name)
+    return name, " / ".join(parts[1:-1])
+
+
 def _enrich_candidate(c: OrphanCandidate) -> dict:
+    title, folder = _review_title(c.paths[0])
     return {
         "kind": "file",
         "inode": c.inode,
         "display_path": c.paths[0],
+        "title": title,
+        "folder": folder,
         "extra_paths": len(c.paths) - 1,
         "category": c.category,
         "size_gb": _format_gb(c.size_bytes),

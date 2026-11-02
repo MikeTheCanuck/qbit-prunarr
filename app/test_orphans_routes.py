@@ -960,13 +960,15 @@ def test_scan_status_is_one_message_beside_the_button():
 
 
 def test_review_columns_have_fixed_widths():
-    """With every group collapsed only full-width header rows remain, so
-    Size and Delete drifted to the middle without explicit widths."""
+    """Size and the last column keep explicit widths, so they don't drift
+    when a table has only a few short rows."""
     html = TestClient(app).get("/orphans").text
-    assert "th.col-size" in html and "th.col-delete" in html
-    review = html[html.index('id="review-table"'):]
+    assert "th.col-size" in html and "th.col-delete" in html and "th.col-more" in html
+    download = _table_region(html, "download-table")
+    assert '<th class="col-delete">Delete</th>' in download
+    review = _table_region(html, "review-table")
     assert '<th class="sortable col-size" data-sort="size">Size</th>' in review
-    assert '<th class="col-delete">Delete</th>' in review
+    assert '<th class="col-more"></th>' in review
 
 
 def test_scan_status_hides_not_scanned_after_a_scan():
@@ -986,14 +988,6 @@ def test_extras_tab_exists_without_counts_before_a_scan():
     assert 'data-panel="extras"' in response.text
     assert 'class="tab-count"' not in response.text
 
-
-def test_keep_rows_guard_their_delete(tmp_path):
-    response = _scan_with(tmp_path, _plex_with_extras())
-    review = _table_region(response.text, "review-table")
-    at = review.index("Extras/Trailer.mkv")
-    trailer_row = review[review.rindex("<tr", 0, at): review.index("</tr>", at)]
-    assert "keep-cb" in trailer_row
-    assert "The suggestion is to keep" in trailer_row
 
 
 def test_plex_confirmed_extra_moves_to_extras_tab(tmp_path):
@@ -1225,7 +1219,7 @@ def test_unreachable_plex_keeps_extras_in_review_and_says_not_checked(tmp_path):
     review = _table_region(response.text, "review-table")
     row = _row_for(review, "Featurettes/Making Of.mkv")
     assert "verdict-plex" in row and "Leave it where it is." in row
-    assert "keep-cb" in row
+    assert 'name="inodes"' not in row
     assert "Plex: unreachable" in swapped
     assert "Plex extras:" not in swapped
     assert 'id="extras-unchecked"' in swapped
@@ -1295,12 +1289,6 @@ def test_bulk_delete_skips_an_inode_this_page_never_showed(tmp_path):
     assert "1 skipped" in response.headers["location"].replace("%20", " ")
 
 
-def test_review_confirm_warns_about_hand_ticked_keeps():
-    html = TestClient(app).get("/orphans").text
-    assert "#review-table .keep-cb:checked" in html
-    assert "are suggested keeps." in html
-
-
 def test_review_buckets_count_every_kind_including_empty():
     rows = [{"verdict": "junk", "size_bytes": 2_000_000_000}, {"verdict": None, "size_bytes": 5}]
     b = {x["kind"]: x for x in main._review_buckets(rows)}
@@ -1333,3 +1321,52 @@ def test_needs_review_drops_flat_mode_and_expand_collapse():
     assert 'data-mode="flat"' not in html and 'data-folders="expand"' not in html
     assert "folder-all" not in html and "orphans-review-mode" not in html
     assert "showBucket" in html and "orphans-review-bucket" in html
+
+
+@pytest.mark.parametrize("path,expected", [
+    ("media/tv/Lucky Hank/Lucky.Hank.S01E07.1080p.WEB.h264-ETHEL.mkv",
+     ("Lucky Hank S01E07 1080p WEB h264-ETHEL", "tv / Lucky Hank")),
+    ("media/movies/Iron Man 3 2013/Sample,Screens/Iron Man 3 (Sample).mkv",
+     ("Iron Man 3 (Sample)", "movies / Iron Man 3 2013 / Sample,Screens")),
+    ("media/tv/American_Dad_S07E08.mkv", ("American Dad S07E08", "tv")),
+    ("media/x.mkv", ("x", "")),
+])
+def test_review_title_splits_name_and_folder(path, expected):
+    assert main._review_title(path) == expected
+
+
+def _review_row(review: str, name: str) -> str:
+    """The one review <tr> whose content names the file. _row_for can land
+    on the previous row, because each row's tbody repeats its path."""
+    rows = [r.split("</tr>")[0] for r in review.split('<tr id="orphan-row-')[1:]]
+    return next(r for r in rows if name in r)
+
+
+def test_keep_rows_have_no_checkbox_and_delete_hides_in_a_menu(tmp_path):
+    response = _scan_with(tmp_path, _plex_with_extras())
+    review = _table_region(response.text, "review-table")
+    row = _review_row(review, "Extras/Trailer.mkv")
+    assert 'name="inodes"' not in row
+    assert 'class="keep-mark"' in row
+    assert 'class="delete-anyway"' in row and "Delete anyway" in row
+    assert "<button hx-delete" not in row   # the old red per-row Delete button is gone
+
+
+def test_deletable_rows_keep_a_checkbox_and_no_delete_button(tmp_path):
+    response = _scan_with(tmp_path, _plex_with_extras())
+    row = _review_row(_table_region(response.text, "review-table"), "film-sample.mkv")
+    assert 'name="inodes"' in row and "delete-anyway" not in row
+    assert ">film-sample<" in row or "film-sample</" in row   # readable name, extension dropped
+    assert 'class="copy-path"' in row
+
+
+def test_review_table_has_no_delete_column():
+    html = TestClient(app).get("/orphans").text
+    review = html[html.index('id="review-table"'):html.index("</thead>", html.index('id="review-table"'))]
+    assert "col-delete" not in review and ">Delete<" not in review
+    assert ">File<" in review
+
+
+def test_copy_path_works_over_plain_http():
+    html = TestClient(app).get("/orphans").text
+    assert "execCommand('copy')" in html
