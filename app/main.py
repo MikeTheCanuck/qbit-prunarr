@@ -591,8 +591,36 @@ def _extras_groups() -> list[dict]:
     return sorted(groups, key=lambda g: -g["size_bytes"])
 
 
+# Needs Review's group cards, in decision order: clear-cut deletes first,
+# the files to keep next, the ones needing a look last.
+REVIEW_BUCKETS = [
+    {"kind": "junk", "label": "Delete", "title": "Probably junk",
+     "sub": "Safe to delete once you've glanced at the reason."},
+    {"kind": "wanted", "label": "Keep", "title": "Sonarr/Radarr wants it",
+     "sub": "Real content your library is missing. Import it instead of deleting it."},
+    {"kind": "plex", "label": "Keep", "title": "Plex can't see it",
+     "sub": "Bonus material in a place or under a name Plex ignores. Moving it makes it show up as an extra."},
+    {"kind": "identify", "label": "Look first", "title": "Identify it",
+     "sub": "Looks like a special, but nothing matched. Watch it, then rename it or treat it as an extra."},
+    {"kind": "call", "label": "Look first", "title": "Your call",
+     "sub": "No evidence either way."},
+]
+
+
+def _review_buckets(review_candidates: list[dict]) -> list[dict]:
+    """Every card with its count and size, empty ones included, so a group
+    you've just cleared still has a card to come back to."""
+    buckets = []
+    for b in REVIEW_BUCKETS:
+        members = [c for c in review_candidates if (c["verdict"] or "call") == b["kind"]]
+        size = sum(c["size_bytes"] for c in members)
+        buckets.append({**b, "keep": b["kind"] in KEEP_KINDS, "count": len(members),
+                        "size_bytes": size, "size_gb": _format_gb(size)})
+    return buckets
+
+
 _EMPTY_ORPHANS_CONTEXT = {
-    "download_units": [], "review_candidates": [], "status_lines": [], "scanned": False,
+    "download_units": [], "review_candidates": [], "review_buckets": [], "status_lines": [], "scanned": False,
     "extras_groups": [], "extras_checked": False,
 }
 
@@ -653,6 +681,7 @@ async def orphans_scan(request: Request):
             {
                 "download_units": _download_units(download_candidates),
                 "review_candidates": review_candidates,
+                "review_buckets": _review_buckets(review_candidates),
                 "extras_groups": _extras_groups(),
                 "extras_checked": _extras_checked(statuses),
                 "error": None,

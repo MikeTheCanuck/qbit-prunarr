@@ -959,16 +959,6 @@ def test_scan_status_is_one_message_beside_the_button():
     assert 'hx-select-oob="#scan-status"' in html
 
 
-def test_expand_collapse_all_is_toggled_by_script_not_has():
-    """Firefox didn't re-evaluate a :has(+ #review-table.folder-mode) rule
-    when the script added the class, so the buttons never appeared. The
-    script now flips the hidden attribute itself."""
-    html = TestClient(app).get("/orphans").text
-    assert '<p class="folder-all" hidden>' in html
-    assert ":has(+ #review-table" not in html
-    assert "querySelector('.folder-all').hidden" in html
-
-
 def test_review_columns_have_fixed_widths():
     """With every group collapsed only full-width header rows remain, so
     Size and Delete drifted to the middle without explicit widths."""
@@ -988,11 +978,6 @@ def test_scan_status_hides_not_scanned_after_a_scan():
          )):
         html = TestClient(app).post("/orphans/scan").text
     assert 'id="scan-status" class="scanned"' in html
-
-
-def test_needs_review_offers_verdict_grouping():
-    response = TestClient(app).get("/orphans")
-    assert 'data-mode="verdict"' in response.text and 'data-mode="flat"' in response.text
 
 
 def test_extras_tab_exists_without_counts_before_a_scan():
@@ -1054,8 +1039,7 @@ def test_sonarr_series_folder_with_prefix_and_trailing_slash_still_maps(tmp_path
 def test_review_form_has_its_own_bulk_delete_button(tmp_path):
     """Needs Review gets a submit inside its own form, so its checkboxes do
     something - and still can't post anything from the download table."""
-    with _services():
-        response = TestClient(app).post("/orphans/scan")
+    response = _scan_with(tmp_path, _plex_with_extras())
 
     start = response.text.index('id="review-form"')
     form = response.text[start:response.text.index("</form>", start)]
@@ -1089,10 +1073,9 @@ def test_bulk_delete_success_says_what_it_did(tmp_path):
     assert 'class="done-banner"' in page.text
 
 
-def test_page_has_sticky_delete_bar_and_folder_controls():
+def test_page_has_sticky_delete_bar():
     html = TestClient(app).get("/orphans").text
     assert 'id="sticky-delete"' in html and 'id="sticky-delete-btn"' in html
-    assert 'data-folders="expand"' in html and 'data-folders="collapse"' in html
 
 
 def test_bulk_delete_records_exactly_what_it_removed(tmp_path, monkeypatch):
@@ -1316,3 +1299,37 @@ def test_review_confirm_warns_about_hand_ticked_keeps():
     html = TestClient(app).get("/orphans").text
     assert "#review-table .keep-cb:checked" in html
     assert "are suggested keeps." in html
+
+
+def test_review_buckets_count_every_kind_including_empty():
+    rows = [{"verdict": "junk", "size_bytes": 2_000_000_000}, {"verdict": None, "size_bytes": 5}]
+    b = {x["kind"]: x for x in main._review_buckets(rows)}
+    assert [x["kind"] for x in main.REVIEW_BUCKETS] == ["junk", "wanted", "plex", "identify", "call"]
+    assert b["junk"]["count"] == 1 and b["junk"]["size_gb"] == "2.0"
+    assert b["call"]["count"] == 1          # no verdict counts as Your call
+    assert b["wanted"]["count"] == 0 and b["wanted"]["keep"] is True
+    assert b["junk"]["keep"] is False
+
+
+def test_needs_review_shows_group_cards_after_a_scan(tmp_path):
+    response = _scan_with(tmp_path, _plex_with_extras())
+    swapped = _swapped_region(response.text)
+    cards = swapped[swapped.index('id="review-buckets"'):swapped.index('id="review-form"')]
+    assert 'data-kind="junk"' in cards and "Probably junk" in cards and ">Delete<" in cards
+    assert "Sonarr/Radarr wants it" in cards and "Keep: " not in cards
+    assert "Nothing to delete here. Do the step under each file." in swapped
+    assert "Tick the ones to delete." in swapped
+
+
+def test_needs_review_with_nothing_says_so(tmp_path):
+    with _services():
+        html = TestClient(app).post("/orphans/scan").text
+    assert "Nothing needs review." in html
+    assert 'id="review-buckets"' not in html
+
+
+def test_needs_review_drops_flat_mode_and_expand_collapse():
+    html = TestClient(app).get("/orphans").text
+    assert 'data-mode="flat"' not in html and 'data-folders="expand"' not in html
+    assert "folder-all" not in html and "orphans-review-mode" not in html
+    assert "showBucket" in html and "orphans-review-bucket" in html
