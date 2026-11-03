@@ -9,8 +9,10 @@
     {%- if c.tracks_sample and not c.verdict %}<span class="chip" title="Radarr's file for this movie is a sample clip, so this is probably the real movie. Fix it in Radarr instead of deleting.">Radarr is tracking a sample: likely the real movie</span>{% endif %}</div>
     {%- if c.folder %}<div class="folder">{{ c.folder }}</div>{% endif %}
     {%- if c.verdict %}
-    <div class="verdict-action verdict-{{ c.verdict }}">&rarr; {{ c.verdict_action }}</div>
-    <div class="verdict-reason">{{ c.verdict_reason }}</div>
+    <div class="next verdict-{{ c.verdict }}">
+      <div class="verdict-action">{{ c.verdict_action }}</div>
+      <div class="verdict-reason">{{ c.verdict_reason }}</div>
+    </div>
     {%- endif %}</td>
   <td class="size">{{ c.size_gb }} GB</td>
   <td class="more"><button type="button" class="more-btn" title="More" aria-haspopup="true">&#8943;</button>

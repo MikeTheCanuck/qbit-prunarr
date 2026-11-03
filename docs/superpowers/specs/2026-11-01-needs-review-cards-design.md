@@ -52,7 +52,7 @@ Clicking a card shows only that group's rows. Under the cards sits one header st
 - its title
 - today's one-line description of the group
 - a mode line:
-  - Keep groups: `Nothing to delete here. Do the step under each file.`
+  - Keep groups: `Nothing to delete here. Each file lists its next step.`
   - all other groups: `Tick the ones to delete.`
 
 Which group is showing:

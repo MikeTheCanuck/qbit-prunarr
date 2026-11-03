@@ -1305,7 +1305,7 @@ def test_needs_review_shows_group_cards_after_a_scan(tmp_path):
     cards = swapped[swapped.index('id="review-buckets"'):swapped.index('id="review-form"')]
     assert 'data-kind="junk"' in cards and "Probably junk" in cards and ">Delete<" in cards
     assert "Sonarr/Radarr wants it" in cards and "Keep: " not in cards
-    assert "Nothing to delete here. Do the step under each file." in swapped
+    assert "Nothing to delete here. Each file lists its next step." in swapped
     assert "Tick the ones to delete." in swapped
 
 
