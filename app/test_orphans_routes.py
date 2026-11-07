@@ -1379,7 +1379,6 @@ def test_review_deletes_confirm_in_a_styled_dialog():
     assert ">Cancel<" in dialog and "autofocus" in dialog
     assert "showModal()" in html
     assert "The suggestion is to keep this file: " in html
-    assert "subtitle/metadata" in html
 
 
 def test_sticky_bar_has_clear_and_is_the_review_tabs_only_delete(tmp_path):
@@ -1416,3 +1415,34 @@ def test_review_confirm_no_longer_uses_native_confirm():
     html = TestClient(app).get("/orphans").text
     assert "None of them are in your library" not in html     # the old confirm() text
     assert "confirm('Delete every selected file and folder?')" in html   # download tab unchanged
+
+
+def test_review_rows_carry_their_sidecar_names(tmp_path):
+    """The confirm lists each sidecar by name under its video, so the
+    row has to hand the dialog the names, not just a count."""
+    import os
+    _make_file(os.path.join(str(tmp_path), *FILM.split("/"), "film-sample.srt"))
+    response = _scan_with(tmp_path, _plex_with_extras())
+    row = _review_row(_swapped_region(response.text), "film-sample")
+    assert 'data-sidecar-names=\'["film-sample.srt"]\'' in row
+
+
+def test_delete_dialog_lists_each_sidecar_under_its_video():
+    html = TestClient(app).get("/orphans").text
+    assert "JSON.parse(tr.dataset.sidecarNames" in html
+    assert "sub.className = 'sc';" in html
+    assert "Indented: subtitle and metadata files named after the video above them. They're deleted with it." in html
+
+
+def test_an_in_flight_delete_says_so_in_the_row():
+    """A dimmed row alone read as stalled; the row now says what's happening."""
+    html = TestClient(app).get("/orphans").text
+    assert "function markDeleting(tr)" in html
+    assert "Deleting. First making sure nothing has claimed it since your scan (about 15 seconds)." in html
+
+
+def test_busy_label_does_not_promise_a_fresh_scan():
+    """"Re-checking" made people expect fresh scan results on screen."""
+    html = TestClient(app).get("/orphans").text
+    assert "Re-checking" not in html
+    assert "Deleting… (about 15 seconds)" in html

@@ -1,6 +1,6 @@
 {# One Needs Review row. Keep rows get no checkbox, so they can't ride along
    in a bulk delete; deleting one takes the ⋯ menu's "Delete anyway…". #}
-<tr id="orphan-row-{{ c.inode }}" data-path="{{ c.display_path }}" data-size-bytes="{{ c.size_bytes }}" data-sidecars="{{ (c.sidecars or []) | length }}" data-name="{{ c.title }}" data-action="{{ c.verdict_action or '' }}">
+<tr id="orphan-row-{{ c.inode }}" data-path="{{ c.display_path }}" data-size-bytes="{{ c.size_bytes }}" data-sidecars="{{ (c.sidecars or []) | length }}" data-sidecar-names='{{ (c.sidecars or []) | tojson }}'data-name="{{ c.title }}" data-action="{{ c.verdict_action or '' }}">
   <td>{% if c.keep %}<span class="keep-mark" title="Keep">&#10003;</span>{% else %}<input type="checkbox" name="inodes" value="{{ c.inode }}" class="orphan-cb">{% endif %}</td>
   <td><div class="name" title="{{ c.display_path }}">{{ c.title }}
     {%- if c.extra_paths > 0 %}<span class="chip" title="Hardlinked under {{ c.extra_paths }} more path(s)">+{{ c.extra_paths }} more</span>{% endif %}

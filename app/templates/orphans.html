@@ -141,6 +141,19 @@
     /* In-flight delete: every delete re-scans first (~15s), so show it. */
     .deleting td { opacity: 0.55; }
     .deleting button { cursor: progress; }
+    /* A review row being deleted says so in words, undimmed, in the busy colour. */
+    #review-table .deleting td { opacity: 1; }
+    #review-table .deleting td > :not(.row-status) { opacity: 0.45; }
+    #review-table .deleting td.size { color: #6b7076; }
+    #review-table .deleting .more-btn { visibility: hidden; }
+    .row-status { margin-top: 8px; padding: 6px 10px; border-left: 3px solid var(--busy); background: #3a2c1a;
+      color: #f0b46e; font-size: 13.5px; font-weight: 600; border-radius: 3px; }
+    .spin { display: inline-block; width: 11px; height: 11px; margin-right: 8px; vertical-align: -1px;
+      border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #delete-dialog li.sc { list-style: none; margin-left: 18px; color: var(--text-muted); }
+    #delete-dialog li.sc::before { content: "+ "; }
+    #delete-dialog .dd-sidecars { margin-top: 0; font-size: 13px; color: var(--text-muted); }
     /* In-flight deletes go orange: still happening, not yet done or failed,
        and visibly different from the red "Delete" they started as. */
     button.busy, button.busy:hover, button.busy:disabled { background: var(--busy) !important; color: #1f2126 !important;
@@ -702,12 +715,20 @@
       s.textContent = '· ' + formatGB(size);
       li.appendChild(s);
       list.appendChild(li);
+      // Each sidecar by name, indented under its video, so nothing goes unlisted.
+      JSON.parse(tr.dataset.sidecarNames || '[]').forEach(function (name) {
+        var sub = document.createElement('li');
+        sub.className = 'sc';
+        sub.textContent = name;
+        list.appendChild(sub);
+      });
     });
     document.getElementById('dd-title').textContent =
-      'Delete ' + rows.length + (rows.length === 1 ? ' file' : ' files') + ' (' + formatGB(bytes) + ')?';
+      'Delete ' + rows.length + (rows.length === 1 ? ' file' : ' files') +
+      (sidecars ? ' and ' + sidecars + (sidecars === 1 ? ' sidecar' : ' sidecars') : '') + ' (' + formatGB(bytes) + ')?';
     var sc = dialog.querySelector('.dd-sidecars');
     sc.hidden = !sidecars;
-    sc.textContent = 'Plus ' + sidecars + ' subtitle/metadata ' + (sidecars === 1 ? 'file' : 'files') + ' named after them.';
+    sc.textContent = "Indented: subtitle and metadata files named after the video above them. They're deleted with it.";
     var keep = dialog.querySelector('.dd-keep');
     keep.hidden = !opts.keep;
     keep.textContent = 'The suggestion is to keep this file: ' + (rows[0] ? rows[0].dataset.action : '');
@@ -726,6 +747,21 @@
     if (run) { run(); }
   });
 
+  // A row on its way out says so: a dimmed row alone looked stalled.
+  function markDeleting(tr) {
+    tr.classList.add('deleting');
+    var cell = tr.cells[1];
+    if (!cell || cell.querySelector('.row-status')) { return; }
+    var status = document.createElement('div');
+    status.className = 'row-status';
+    var spin = document.createElement('span');
+    spin.className = 'spin';
+    status.appendChild(spin);
+    status.appendChild(document.createTextNode(
+      'Deleting. First making sure nothing has claimed it since your scan (about 15 seconds).'));
+    cell.appendChild(status);
+  }
+
   // A keep row's "Delete anyway…" goes through the same dialog, then
   // sends that row's single-file delete.
   document.addEventListener('click', function (e) {
@@ -738,7 +774,7 @@
     openDeleteDialog([tr], {
       keep: true,
       onConfirm: function () {
-        tr.classList.add('deleting');
+        markDeleting(tr);
         htmx.ajax('DELETE', '/orphans/' + inode, { target: '#orphan-row-' + inode, swap: 'outerHTML' });
       }
     });
@@ -749,11 +785,12 @@
   document.addEventListener('submit', function (e) {
     var btn = e.submitter;
     if (!btn || (btn.id !== 'bulk-delete-btn' && btn.id !== 'review-delete-btn')) { return; }
-    btn.textContent = 'Re-checking and deleting...';
+    btn.textContent = 'Deleting… (about 15 seconds)';
     btn.classList.add('busy');
     var sticky = document.getElementById('sticky-delete-btn');
-    sticky.textContent = 'Re-checking and deleting...';
+    sticky.textContent = 'Deleting… (about 15 seconds)';
     sticky.classList.add('busy');
+    if (btn.id === 'review-delete-btn') { pickedRows('review-table').forEach(markDeleting); }
     // Disable after the submit has been dispatched, so it can't be sent twice.
     setTimeout(function () { btn.disabled = true; }, 0);
   });
@@ -763,7 +800,7 @@
     if (!btn.matches || !btn.matches('button[hx-delete], button.group-delete')) { return; }
     var unit = btn.closest('tbody.orphan-group') || btn.closest('tr');
     if (unit) { unit.classList.add('deleting'); }
-    btn.textContent = 'Re-checking...';
+    btn.textContent = 'Deleting…';
     btn.classList.add('busy');
     btn.title = 'Re-scanning to confirm it is still an orphan before deleting (about 15 seconds)';
   });
