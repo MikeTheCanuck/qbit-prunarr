@@ -166,6 +166,7 @@ It's aimed at people who want their library tidy without studying it, not at peo
 
 - **Sidecars go with their video, no opt-out.** Deleting a video also deletes the subtitle, `.nfo` and artwork files in the same folder that are named after it (`Film.mkv` takes `Film.srt`, `Film.en.srt`, `Film.nfo`, `Film-thumb.jpg`). The bet is that a subtitle or poster for a video you're deleting is worthless on its own. Two guards: if another video in the folder has the same base name, nothing is claimed, and `Film.Part.2.srt` belongs to `Film.Part.2.mkv`, not to `Film.mkv`.
 - **The sidecar list is worked out again at delete time.** The confirm dialog lists the sidecars that were there when you scanned. The delete itself uses a fresh scan, so a subtitle that lands in the folder between your scan and your click goes too, without having been listed. Every file removed is still logged (see [The delete log](#the-delete-log)).
+- **No stop button.** Once you confirm a delete, it runs to the end. The page locks your ticks and hides Clear while it runs, so nothing on screen looks like a cancel.
 - **No undo.** Files are removed directly, not moved to Synology's Recycle Bin or anywhere else. The re-check and the confirm list are the safety net.
 - **Hardlinks go together.** A file with more than one name in your library is still one file on disk. Deleting it removes every one of those names (the row's `+N more` chip lists them).
 - **Empty folders are cleaned up.** After a delete, parent folders left empty are removed, up to but never including the library root.

@@ -1431,7 +1431,6 @@ def test_delete_dialog_lists_each_sidecar_under_its_video():
     html = TestClient(app).get("/orphans").text
     assert "JSON.parse(tr.dataset.sidecarNames" in html
     assert "sub.className = 'sc';" in html
-    assert "Indented: subtitle and metadata files named after the video above them. They're deleted with it." in html
 
 
 def test_an_in_flight_delete_says_so_in_the_row():
@@ -1447,3 +1446,19 @@ def test_busy_label_does_not_promise_a_fresh_scan():
     html = TestClient(app).get("/orphans").text
     assert "Re-checking" not in html
     assert "sticky.textContent = 'Deleting…';" in html
+
+
+def test_dialog_names_sidecars_with_a_word_not_a_tree_glyph():
+    """A "+" under the video read like a file-tree expander."""
+    html = TestClient(app).get("/orphans").text
+    assert "sub.textContent = 'with ' + name;" in html
+    assert 'li.sc::before { content: "+ "; }' not in html
+    assert "Indented: subtitle and metadata files" not in html
+
+
+def test_a_running_bulk_delete_locks_the_selection():
+    """Clear (or a new tick) mid-delete looked like a cancel, but the
+    request was already sent and the server finishes it regardless."""
+    html = TestClient(app).get("/orphans").text
+    assert "function lockSelection()" in html
+    assert "document.getElementById('sticky-clear').hidden = true;" in html

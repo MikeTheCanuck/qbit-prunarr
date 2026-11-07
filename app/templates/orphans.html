@@ -152,8 +152,6 @@
       border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
     #delete-dialog li.sc { list-style: none; margin-left: 18px; color: var(--text-muted); }
-    #delete-dialog li.sc::before { content: "+ "; }
-    #delete-dialog .dd-sidecars { margin-top: 0; font-size: 13px; color: var(--text-muted); }
     /* In-flight deletes go orange: still happening, not yet done or failed,
        and visibly different from the red "Delete" they started as. */
     button.busy, button.busy:hover, button.busy:disabled { background: var(--busy) !important; color: #1f2126 !important;
@@ -367,7 +365,6 @@
   <p class="dd-keep" hidden></p>
   <p>These files will be removed:</p>
   <ul id="dd-list"></ul>
-  <p class="dd-sidecars" hidden></p>
   <p class="dd-warn">Deleted files can't be recovered. Each one is re-checked first, and anything that has since shown up in Sonarr, Radarr or Plex is skipped.</p>
   <footer>
     <button type="button" id="dd-cancel" autofocus>Cancel</button>
@@ -719,16 +716,13 @@
       JSON.parse(tr.dataset.sidecarNames || '[]').forEach(function (name) {
         var sub = document.createElement('li');
         sub.className = 'sc';
-        sub.textContent = name;
+        sub.textContent = 'with ' + name;
         list.appendChild(sub);
       });
     });
     document.getElementById('dd-title').textContent =
       'Delete ' + rows.length + (rows.length === 1 ? ' file' : ' files') +
       (sidecars ? ' and ' + sidecars + (sidecars === 1 ? ' sidecar' : ' sidecars') : '') + ' (' + formatGB(bytes) + ')?';
-    var sc = dialog.querySelector('.dd-sidecars');
-    sc.hidden = !sidecars;
-    sc.textContent = "Indented: subtitle and metadata files named after the video above them. They're deleted with it.";
     var keep = dialog.querySelector('.dd-keep');
     keep.hidden = !opts.keep;
     keep.textContent = 'The suggestion is to keep this file: ' + (rows[0] ? rows[0].dataset.action : '');
@@ -794,9 +788,18 @@
     sticky.textContent = 'Deleting…';
     sticky.classList.add('busy');
     if (btn.id === 'review-delete-btn') { pickedRows('review-table').forEach(markDeleting); }
-    // Disable after the submit has been dispatched, so it can't be sent twice.
-    setTimeout(function () { btn.disabled = true; }, 0);
+    // Disable after the submit has been dispatched, so it can't be sent twice
+    // (and so the ticked boxes still make it into the request).
+    setTimeout(function () { btn.disabled = true; lockSelection(); }, 0);
   });
+
+  // Once a delete is sent there's no stopping it, so nothing on screen may
+  // look like a stop: Clear goes, and the ticks can't change.
+  function lockSelection() {
+    document.getElementById('sticky-clear').hidden = true;
+    document.getElementById('sticky-delete-btn').disabled = true;
+    document.querySelectorAll('.orphan-cb, #select-all-review, #select-all-download').forEach(function (cb) { cb.disabled = true; });
+  }
 
   document.addEventListener('htmx:beforeRequest', function (e) {
     var btn = e.detail.elt;
