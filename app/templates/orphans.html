@@ -714,7 +714,7 @@
       bytes += size;
       sidecars += parseInt(tr.dataset.sidecars, 10) || 0;
       var li = document.createElement('li');
-      li.textContent = tr.dataset.name + ' ';
+      li.textContent = tr.dataset.path.split('/').pop() + ' ';
       var s = document.createElement('span');
       s.className = 's';
       s.textContent = '· ' + formatGB(size);

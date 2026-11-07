@@ -1464,3 +1464,10 @@ def test_a_running_bulk_delete_locks_the_selection():
     html = TestClient(app).get("/orphans").text
     assert "function lockSelection()" in html
     assert "document.getElementById('sticky-clear').hidden = true;" in html
+
+
+def test_delete_dialog_lists_the_videos_real_file_name():
+    """The tidied title next to real sidecar file names read as two
+    different kinds of thing; every line is now a real file name."""
+    html = TestClient(app).get("/orphans").text
+    assert "li.textContent = tr.dataset.path.split('/').pop() + ' ';" in html
