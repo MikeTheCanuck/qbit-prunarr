@@ -151,7 +151,8 @@
     .spin { display: inline-block; width: 11px; height: 11px; margin-right: 8px; vertical-align: -1px;
       border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
-    #delete-dialog li.sc { list-style: none; margin-left: 18px; color: var(--text-muted); }
+    #delete-dialog li.sc { list-style: none; margin-left: 30px; color: var(--text-muted); }
+    #delete-dialog li.sc .chip { cursor: default; }
     /* In-flight deletes go orange: still happening, not yet done or failed,
        and visibly different from the red "Delete" they started as. */
     button.busy, button.busy:hover, button.busy:disabled { background: var(--busy) !important; color: #1f2126 !important;
@@ -696,6 +697,13 @@
   // Needs Review's confirm lists exactly what is about to go. File names
   // are untrusted, so the list is built with textContent only.
   var pendingConfirm = null;
+  // Mirrors orphans.SIDECAR_EXTS.
+  function sidecarKind(name) {
+    var ext = name.slice(name.lastIndexOf('.')).toLowerCase();
+    if (ext === '.nfo') { return 'metadata'; }
+    if (['.jpg', '.jpeg', '.png', '.tbn'].indexOf(ext) >= 0) { return 'artwork'; }
+    return 'subtitle';
+  }
   function openDeleteDialog(rows, opts) {
     var dialog = document.getElementById('delete-dialog');
     var bytes = 0, sidecars = 0;
@@ -712,11 +720,17 @@
       s.textContent = '· ' + formatGB(size);
       li.appendChild(s);
       list.appendChild(li);
-      // Each sidecar by name, indented under its video, so nothing goes unlisted.
+      // Each sidecar by name, indented under its video, so nothing goes
+      // unlisted. Its kind goes in a chip: a word that shares the line as
+      // plain text could be mistaken for part of the file name.
       JSON.parse(tr.dataset.sidecarNames || '[]').forEach(function (name) {
         var sub = document.createElement('li');
         sub.className = 'sc';
-        sub.textContent = 'with ' + name;
+        sub.textContent = name;
+        var chip = document.createElement('span');
+        chip.className = 'chip';
+        chip.textContent = sidecarKind(name);
+        sub.appendChild(chip);
         list.appendChild(sub);
       });
     });

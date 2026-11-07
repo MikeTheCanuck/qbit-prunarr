@@ -1451,7 +1451,9 @@ def test_busy_label_does_not_promise_a_fresh_scan():
 def test_dialog_names_sidecars_with_a_word_not_a_tree_glyph():
     """A "+" under the video read like a file-tree expander."""
     html = TestClient(app).get("/orphans").text
-    assert "sub.textContent = 'with ' + name;" in html
+    assert "sub.textContent = name;" in html and "'with ' + name" not in html
+    assert "function sidecarKind(name)" in html
+    assert "chip.className = 'chip';" in html
     assert 'li.sc::before { content: "+ "; }' not in html
     assert "Indented: subtitle and metadata files" not in html
 
