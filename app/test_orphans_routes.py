@@ -1438,11 +1438,12 @@ def test_an_in_flight_delete_says_so_in_the_row():
     """A dimmed row alone read as stalled; the row now says what's happening."""
     html = TestClient(app).get("/orphans").text
     assert "function markDeleting(tr)" in html
-    assert "Deleting. First making sure nothing has claimed it since your scan (about 15 seconds)." in html
+    assert "Checking that qBittorrent, Sonarr, Radarr and Plex still don't use this file, then deleting the file" in html
+    assert "about 15" not in html and "seconds)" not in html
 
 
 def test_busy_label_does_not_promise_a_fresh_scan():
     """"Re-checking" made people expect fresh scan results on screen."""
     html = TestClient(app).get("/orphans").text
     assert "Re-checking" not in html
-    assert "Deleting… (about 15 seconds)" in html
+    assert "sticky.textContent = 'Deleting…';" in html

@@ -757,8 +757,11 @@
     var spin = document.createElement('span');
     spin.className = 'spin';
     status.appendChild(spin);
+    // Say which files, with no "it" and no time estimate: the spinner says it's running.
+    var n = parseInt(tr.dataset.sidecars, 10) || 0;
     status.appendChild(document.createTextNode(
-      'Deleting. First making sure nothing has claimed it since your scan (about 15 seconds).'));
+      "Checking that qBittorrent, Sonarr, Radarr and Plex still don't use this file, then deleting the file" +
+      (n ? ' and its ' + n + (n === 1 ? ' sidecar' : ' sidecars') : '') + '.'));
     cell.appendChild(status);
   }
 
@@ -785,10 +788,10 @@
   document.addEventListener('submit', function (e) {
     var btn = e.submitter;
     if (!btn || (btn.id !== 'bulk-delete-btn' && btn.id !== 'review-delete-btn')) { return; }
-    btn.textContent = 'Deleting… (about 15 seconds)';
+    btn.textContent = 'Deleting…';
     btn.classList.add('busy');
     var sticky = document.getElementById('sticky-delete-btn');
-    sticky.textContent = 'Deleting… (about 15 seconds)';
+    sticky.textContent = 'Deleting…';
     sticky.classList.add('busy');
     if (btn.id === 'review-delete-btn') { pickedRows('review-table').forEach(markDeleting); }
     // Disable after the submit has been dispatched, so it can't be sent twice.
@@ -802,7 +805,7 @@
     if (unit) { unit.classList.add('deleting'); }
     btn.textContent = 'Deleting…';
     btn.classList.add('busy');
-    btn.title = 'Re-scanning to confirm it is still an orphan before deleting (about 15 seconds)';
+    btn.title = "Checking that qBittorrent, Sonarr, Radarr and Plex still don't use these files, then deleting them";
   });
 
   // Confirmations fade out after a few seconds; errors stay put.
