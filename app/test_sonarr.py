@@ -120,3 +120,31 @@ def test_get_all_queue_paths_follows_pagination(client: SonarrClient, httpx_mock
     assert len(paths) == 251
     assert "/tv/ep0.mkv" in paths
     assert "/tv/ep250.mkv" in paths
+
+
+def test_get_series_returns_id_title_and_folder(client: SonarrClient, httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        method="GET",
+        url=f"{BASE_URL}/api/v3/series",
+        json=[{"id": 7, "title": "Firefly", "path": "/data/media/tv/Firefly", "monitored": True}],
+    )
+
+    assert client.get_series() == [{"id": 7, "title": "Firefly", "path": "/data/media/tv/Firefly"}]
+
+
+def test_get_missing_specials_keeps_only_season_zero_without_a_file(client: SonarrClient, httpx_mock: HTTPXMock):
+    httpx_mock.add_response(
+        method="GET",
+        url=f"{BASE_URL}/api/v3/episode?seriesId=7",
+        json=[
+            {"seasonNumber": 0, "episodeNumber": 1, "title": "Serenity", "hasFile": False, "monitored": True},
+            {"seasonNumber": 0, "episodeNumber": 4, "title": "R. Tam Sessions", "hasFile": True, "monitored": True},
+            {"seasonNumber": 0, "episodeNumber": 12, "title": "Gag Reel", "hasFile": False, "monitored": False},
+            {"seasonNumber": 1, "episodeNumber": 1, "title": "Serenity", "hasFile": False, "monitored": True},
+        ],
+    )
+
+    assert client.get_missing_specials(7) == [
+        {"code": "S00E01", "title": "Serenity", "monitored": True},
+        {"code": "S00E12", "title": "Gag Reel", "monitored": False},
+    ]

@@ -21,7 +21,7 @@ Sonarr and Radarr hardlink downloads into the media library, and the two copies 
 
 - A file under `torrents/` or `usenet/` that shares an inode with something under `media/` is linked, which means it's fine.
 - **Unlinked Downloads**: download-side files with no media link, that no qBittorrent torrent and no Sonarr/Radarr queue item claims. These are usually safe to reclaim.
-- **Needs Review**: media-side files that aren't confirmed by *both* the relevant \*arr (Sonarr for TV, Radarr for movies) *and* Plex. These are genuinely ambiguous: a safe leftover duplicate, or real content that never got imported. Look before deleting.
+- **Needs Review**: media-side files that aren't confirmed by *both* the relevant \*arr (Sonarr for TV, Radarr for movies) *and* Plex. Each one gets a verdict saying what to do with it and why. Files Plex has attached as extras (a correctly placed `Featurettes/` file, say) move to their own read-only **Extras** tab instead, since Plex alone vouches for those.
 
 That first bullet only means something if your \*arrs hardlink on import. If they copy, see [Before you start](#before-you-start).
 
@@ -35,14 +35,21 @@ If one of the four isn't there at all (say you run Jellyfin instead of Plex), it
 
 ### Working through Needs Review
 
-- Grouped by movie or show folder, collapsible, biggest first. There's also a flat list.
-- A **Superseded** badge when Radarr tracks a different file in the same movie folder. Radarr never removes files it didn't import itself, so old copies outlive their replacements forever.
-- A warning badge when Radarr's tracked file for the movie is a *sample clip*. In that case the untracked file is probably the real movie. Fix it in Radarr; don't delete it.
-- Deleting a video also deletes its sidecars in the same folder: `Film.srt`, `Film.en.srt`, `Film.nfo`, `Film-thumb.jpg`. If another video shares the name, nothing is claimed.
+Needs Review shows one group at a time; pick one from the cards along the top. Rows are grouped by what to do with them:
+
+- **Probably junk**: sample clips, and older copies Radarr has replaced (Radarr never removes files it didn't import itself).
+- **Sonarr/Radarr wants it** (Keep): a special that matches, by title, an episode Sonarr lists as missing (the row names the exact `S00Exx` to import it as), a movie Radarr has no file for, or the real movie when Radarr is tracking its sample.
+- **Plex can't see it** (Keep): bonus material in a folder or under a name Plex ignores. The row gives the path to move it to. A file already sitting in a `Featurettes/`-style folder that Plex didn't confirm this scan just says to leave it where it is.
+- **Identify it**: looks like a special, but Sonarr couldn't match it (or couldn't be checked). Watch it and work out what it is.
+- **Your call**: no evidence either way.
+
+If Plex's extras couldn't be checked this scan (Plex down, or the lookup failed), Needs Review says so at the top: some of what's there may be extras Plex already shows, and the Extras tab will be empty for the same reason.
+
+Rows in the two Keep groups have no checkbox, so they can't be swept up in a bulk delete. If you really want one gone, it's under the row's `⋯` menu as **Delete anyway…**. Everything else is ticked and deleted from the bar at the bottom, which confirms with a list of exactly what's going. Deleting a video also deletes its sidecars in the same folder: `Film.srt`, `Film.en.srt`, `Film.nfo`, `Film-thumb.jpg`. If another video shares the name, nothing is claimed. Why there's no way to keep them is under [Assumptions and trade-offs](#assumptions-and-trade-offs).
 
 ### Deleting
 
-Single rows, whole groups (a fully orphaned folder), or a bulk selection on either tab. Before anything is removed, the app re-runs the scan and skips anything that's no longer an orphan. Empty parent folders are pruned up to, never past, the library root. A scan takes around 15 seconds on a large library, so deletes take about that long too. The button goes orange while that runs.
+Single rows, whole groups (a fully orphaned folder), or a bulk selection on Unlinked Downloads or Needs Review (Extras is read-only). Before anything is removed, the app re-runs the scan and skips anything that's no longer an orphan. Empty parent folders are pruned up to, never past, the library root. A scan takes around 15 seconds on a large library, so deletes take about that long too. The button goes orange while that runs.
 
 ### The delete log
 
@@ -145,16 +152,41 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 .venv/bin/python -m pytest -q
 ```
 
-The tests mock qBittorrent, Sonarr, Radarr and Plex and build real files and hardlinks in a temp directory, so the scan and delete paths run against an actual filesystem. They don't run the page's JavaScript; selection, grouping and the sticky delete bar get checked by hand in a browser.
+The tests mock qBittorrent, Sonarr, Radarr and Plex and build real files and hardlinks in a temp directory, so the scan and delete paths run against an actual filesystem. They don't run the page's JavaScript; selection, the group cards, the delete bar and the confirm dialog get checked by hand in a browser.
 
 Design notes and implementation plans live in `docs/`.
 
-## Limitations
+## Assumptions and trade-offs
 
-- Only one qBittorrent tag on the cold-torrent page.
-- Scans are on demand. Nothing runs on a schedule, and results live in memory until the next scan or restart.
-- TV extras and specials that Sonarr hasn't matched still land in Needs Review. Teaching it Plex's extras conventions and Sonarr's Season 00 is the next piece of work.
-- Built for one person's NAS. It'll work on yours if your stack and layout match the ones above, but it hasn't been tested anywhere else.
+This app makes calls on your behalf, and some of them are bets about how *your* library is laid out. They're written down here so you can tell when one of them doesn't fit you. If something the app did surprised you, it probably traces back to one of these. Open an issue and say which one, and what your setup looks like.
+
+It's aimed at people who want their library tidy without studying it, not at people who want a setting for every behaviour. So when a choice came down to "add an option" vs. "pick a sensible default and say so here", I picked the default. If you need one of these to be optional, an issue with your use case is how that changes.
+
+### What gets deleted
+
+- **Sidecars go with their video, no opt-out.** Deleting a video also deletes the subtitle, `.nfo` and artwork files in the same folder that are named after it (`Film.mkv` takes `Film.srt`, `Film.en.srt`, `Film.nfo`, `Film-thumb.jpg`). The bet is that a subtitle or poster for a video you're deleting is worthless on its own. Two guards: if another video in the folder has the same base name, nothing is claimed, and `Film.Part.2.srt` belongs to `Film.Part.2.mkv`, not to `Film.mkv`.
+- **The sidecar list is worked out again at delete time.** The confirm dialog lists the sidecars that were there when you scanned. The delete itself uses a fresh scan, so a subtitle that lands in the folder between your scan and your click goes too, without having been listed. Every file removed is still logged (see [The delete log](#the-delete-log)).
+- **No stop button.** Once you confirm a delete, it runs to the end. The page locks your ticks and hides Clear while it runs, so nothing on screen looks like a cancel.
+- **No undo.** Files are removed directly, not moved to Synology's Recycle Bin or anywhere else. The re-check and the confirm list are the safety net.
+- **Hardlinks go together.** A file with more than one name in your library is still one file on disk. Deleting it removes every one of those names (the row's `+N more` chip lists them).
+- **Empty folders are cleaned up.** After a delete, parent folders left empty are removed, up to but never including the library root.
+
+### How files get sorted
+
+- **Your stack does the vouching.** A media file is only "accounted for" when *both* the relevant \*arr and Plex know it. If either one doesn't, it lands in Needs Review. If a service can't be reached, nothing that depends on it gets flagged ([Fail closed](#fail-closed)).
+- **Only Plex can say something is an extra.** A file moves to the Extras tab only when Plex's own extras API lists it. Folder and file names (`Featurettes/`, `-trailer`) are only ever used to *suggest* where to move something, because Plex ignores some places that look right by name (an extras folder inside another extras folder, for one).
+- **The groups are educated guesses.** Probably junk means "sample" in the name or folder and under 500 MB, or an older copy Radarr has already replaced. Sonarr/Radarr wants it means a special whose *title* matches a missing Sonarr episode (the file's own `S00Exx` is ignored, since it's often wrong), or a file over 1 GB in the folder of a movie Radarr has no file for. When the app can't tell, the file goes to Your call. Missing data only ever pushes a file toward Your call, never toward Probably junk.
+- **Keep groups make deleting deliberately awkward.** Rows the app thinks you should keep have no checkbox, so they can't be swept up in a bulk delete. Delete anyway is one menu away, under `⋯`.
+- **Some files never show up at all.** Subtitles, `.nfo` and artwork aren't listed in Needs Review (no \*arr tracks them, so they'd all be noise). Synology's `@eaDir` and `#recycle` folders are skipped, and macOS's `.DS_Store` and `._` files are treated as clutter.
+
+### How it runs
+
+- **No login.** Anyone who can reach port 8585 can delete files. It's meant for a home network you trust. Don't expose it to the internet.
+- **One stack, one layout.** qBittorrent, Sonarr, Radarr and Plex, hardlinking on import, everything on one volume ([Before you start](#before-you-start)). The folder names (`torrents/`, `media/tv`...) live in `app/main.py`.
+- **Every delete re-scans first.** That's what makes deletes slow. In exchange, a file that Sonarr, Radarr or Plex picked up after your scan is skipped instead of deleted.
+- **Scans are on demand.** Nothing runs on a schedule, and results live in memory until the next scan or a restart.
+- **Only one qBittorrent tag** on the cold-torrent page.
+- **Built for one person's NAS.** It'll work on yours if your stack and layout match, but it hasn't been tested anywhere else.
 
 ## Contributing
 

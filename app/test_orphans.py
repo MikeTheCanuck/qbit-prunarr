@@ -546,3 +546,35 @@ def test_multi_cd_rip_sidecars_split_per_disc(tmp_path):
         _touch(root, f"{d}/GP.CD{n}-WAF.srt")
     _touch(root, f"{d}/GP.3CD-WAF.nfo")
     assert [p.split("/")[-1] for p in find_sidecars(root, f"{d}/GP.CD2-WAF.avi")] == ["GP.CD2-WAF.srt"]
+
+
+
+from orphans import OrphanCandidate, split_plex_extras
+
+
+def _media(inode, *paths):
+    return OrphanCandidate(inode=inode, paths=list(paths), category="orphaned media", size_bytes=10)
+
+
+def test_split_plex_extras_moves_confirmed_extras_out():
+    extra = _media(1, "media/movies/Film/Featurettes/Making Of.mkv")
+    other = _media(2, "media/movies/Film/Extras/Trailer.mkv")
+    kept, extras = split_plex_extras([extra, other], {"media/movies/Film/Featurettes/Making Of.mkv"})
+    assert extras == [extra]
+    assert kept == [other]
+
+
+def test_split_plex_extras_counts_any_hardlink_path():
+    c = _media(3, "media/tv/Show/Bonus/x.mkv", "media/tv/Show/Featurettes/x.mkv")
+    kept, extras = split_plex_extras([c], {"media/tv/Show/Featurettes/x.mkv"})
+    assert extras == [c] and kept == []
+
+
+def test_split_plex_extras_without_plex_data_moves_nothing():
+    c = _media(4, "media/movies/Film/Featurettes/Making Of.mkv")
+    assert split_plex_extras([c], None) == ([c], [])
+
+
+def test_split_plex_extras_never_touches_download_candidates():
+    d = OrphanCandidate(inode=5, paths=["torrents/x.mkv"], category="unlinked download", size_bytes=1)
+    assert split_plex_extras([d], {"torrents/x.mkv"}) == ([d], [])

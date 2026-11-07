@@ -1,22 +1,28 @@
 <tr id="orphan-row-{{ c.inode }}"{% if c.is_child %} class="group-child"{% endif %} data-path="{{ c.display_path }}" data-size-bytes="{{ c.size_bytes }}" data-sidecars="{{ (c.sidecars or []) | length }}">
-  <td><input type="checkbox" name="inodes" value="{{ c.inode }}" class="orphan-cb"></td>
+  <td><input type="checkbox" name="inodes" value="{{ c.inode }}" class="orphan-cb{% if c.keep %} keep-cb{% endif %}"></td>
   <td>{{ c.display_path }}{% if c.extra_paths > 0 %} (+{{ c.extra_paths }} more){% endif %}
-    {%- if c.superseded_by %}
+    {%- if c.superseded_by and not c.verdict %}
     <span class="superseded" title="Radarr tracks {{ c.superseded_by }} in this folder">Superseded: Radarr has a newer copy in this folder</span>
     {%- endif %}
     {%- if c.sidecars %}
     <span class="sidecars" title="Also deleted with it: {{ c.sidecars | join(', ') }}">+{{ c.sidecars | length }} sidecar{{ 's' if c.sidecars | length != 1 }}</span>
     {%- endif %}
-    {%- if c.tracks_sample %}
+    {%- if c.tracks_sample and not c.verdict %}
     <span class="tracks-sample" title="Radarr's file for this movie is a sample clip, so this is probably the real movie. Fix it in Radarr instead of deleting.">Radarr is tracking a sample: likely the real movie</span>
+    {%- endif %}
+    {%- if c.verdict %}
+    <div class="verdict-action verdict-{{ c.verdict }}">&rarr; {{ c.verdict_action }}</div>
+    <div class="verdict-reason">{{ c.verdict_reason }}</div>
     {%- endif %}</td>
   <td>{{ c.size_gb }} GB</td>
   <td>
     <button hx-delete="/orphans/{{ c.inode }}"
             hx-target="#orphan-row-{{ c.inode }}"
             hx-swap="outerHTML"
-            hx-confirm="Delete {{ c.display_path }}?{% if c.sidecars %} Its {{ c.sidecars | length }} sidecar file(s) ({{ c.sidecars | join(', ') }}) go with it.{% endif %}"
-            hx-params="none"
+            {% if c.keep %}class="keep-delete"
+            hx-confirm="The suggestion is to keep {{ c.display_path }}. Delete anyway?{% if c.sidecars %} Its {{ c.sidecars | length }} sidecar file(s) go with it.{% endif %}"
+            {% else %}hx-confirm="Delete {{ c.display_path }}?{% if c.sidecars %} Its {{ c.sidecars | length }} sidecar file(s) ({{ c.sidecars | join(', ') }}) go with it.{% endif %}"
+            {% endif %}hx-params="none"
             hx-disabled-elt="this">
       Delete
     </button>

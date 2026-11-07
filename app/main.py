@@ -4,6 +4,7 @@ import hashlib
 import logging
 from datetime import datetime
 import os
+import re
 import time
 from html import escape
 from typing import Optional
@@ -25,12 +26,15 @@ from orphans import (
     mark_superseded,
     path_tracked,
     prune_empty_tree,
+    split_plex_extras,
+    title_folder,
 )
 from pathmap import to_relative
 from plex import PlexClient
 from qbit import QBitClient
 from radarr import RadarrClient
 from sonarr import SonarrClient
+from verdicts import KEEP_KINDS, MissingSpecial, RadarrMovie, SeriesSpecials, VerdictContext, assign_verdict
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
@@ -60,6 +64,10 @@ QBIT_SUBDIRS = ["torrents"]  # subdirs qBittorrent has authority over — not us
 
 _scan_cache: dict[int, OrphanCandidate] = {}
 _group_cache: dict[str, OrphanGroup] = {}
+# Media candidates Plex has attached as local extras. Display only: these
+# never enter _scan_cache and run_scan never returns them, so no delete
+# route can reach one.
+_extras_cache: list[OrphanCandidate] = []
 
 
 def _current_data_root() -> str:
@@ -242,6 +250,44 @@ def _fetch_plex_episode_paths() -> set[str]:
         return client.get_all_episode_paths()
 
 
+def _fetch_plex_extras(title_folders: set[str], prefix: str) -> set[str]:
+    """Relative paths of every file Plex has attached as a local extra to a
+    title whose folder is in title_folders. Its own session, so a failure
+    here can't make Plex itself look unreachable."""
+    with PlexClient(os.environ["PLEX_URL"], os.environ["PLEX_TOKEN"]) as client:
+        files = {**client.get_movie_files(), **client.get_episode_files()}
+        keys: set[str] = set()
+        for raw, item_keys in files.items():
+            if title_folder(to_relative(raw, prefix)) in title_folders:
+                keys.update(item_keys)
+        if not keys:
+            return set()
+        return {to_relative(p, prefix) for p in client.get_extra_paths(keys)}
+
+
+def _fetch_sonarr_specials(tv_folders: set[str], prefix: str) -> dict[str, SeriesSpecials]:
+    """Missing season-0 episodes for each Sonarr series whose folder holds a
+    Needs Review file, keyed by that folder. A series with nothing missing
+    still gets an entry, so "no series here" stays distinguishable from
+    "nothing matched"."""
+    with SonarrClient(os.environ["SONARR_URL"], os.environ["SONARR_API_KEY"]) as client:
+        out: dict[str, SeriesSpecials] = {}
+        for series in client.get_series():
+            folder = to_relative(series["path"], prefix).rstrip("/")
+            if folder in tv_folders:
+                missing = tuple(MissingSpecial(**e) for e in client.get_missing_specials(series["id"]))
+                out[folder] = SeriesSpecials(series=series["title"], missing=missing)
+        return out
+
+
+def _fetch_radarr_movies(prefix: str) -> dict[str, RadarrMovie]:
+    with RadarrClient(os.environ["RADARR_URL"], os.environ["RADARR_API_KEY"]) as client:
+        return {
+            to_relative(m["path"], prefix).rstrip("/"): RadarrMovie(m["title"], m["year"], m["has_file"])
+            for m in client.get_movies()
+        }
+
+
 def _flatten(paths_by_inode: dict[int, list[str]]) -> list[str]:
     return [p for paths in paths_by_inode.values() for p in paths]
 
@@ -368,6 +414,40 @@ def run_scan() -> tuple[list[OrphanCandidate], dict[str, str]]:
     mark_superseded(candidates, radarr_paths, TV_SUBDIRS)
     attach_sidecars(candidates, data_root)
 
+    # Extras: Plex alone vouches for these, so pull them out of Needs
+    # Review before anything else looks at it. Plex unusable/unreachable
+    # or a failed lookup leaves extra_paths None: nothing moves.
+    # Every hardlink path counts: an extra may be confirmed under any of them.
+    review_folders = {title_folder(p) for c in candidates if c.category == "orphaned media" for p in c.paths}
+    extra_paths = None
+    if plex_movie_paths is not None and plex_episode_paths is not None:
+        extra_paths = _safe(lambda: _fetch_plex_extras(review_folders, plex_prefix)) if review_folders else set()
+        if extra_paths is None:
+            plex_extras_status = "not checked"
+        else:
+            plex_extras_status = "ok"
+    else:
+        plex_extras_status = None
+    candidates, extras = split_plex_extras(candidates, extra_paths)
+    _extras_cache.clear()
+    _extras_cache.extend(extras)
+
+    tv_folders = {
+        title_folder(c.paths[0]) for c in candidates
+        if c.category == "orphaned media" and is_tv_path(c.paths[0], TV_SUBDIRS)
+    }
+    if sonarr_paths is None:
+        specials = None
+    elif tv_folders:
+        specials = _safe(lambda: _fetch_sonarr_specials(tv_folders, sonarr_prefix))
+    else:
+        specials = {}
+    radarr_movies = _safe(lambda: _fetch_radarr_movies(radarr_prefix)) if radarr_paths is not None else None
+    ctx = VerdictContext(TV_SUBDIRS, specials, radarr_movies, radarr_paths)
+    for c in candidates:
+        if c.category == "orphaned media":
+            c.verdict = assign_verdict(c, ctx)
+
     _scan_cache.clear()
     for c in candidates:
         _scan_cache[c.inode] = c
@@ -395,6 +475,10 @@ def run_scan() -> tuple[list[OrphanCandidate], dict[str, str]]:
         "Radarr": radarr_status,
         "Plex": plex_status,
     }
+    # Only worth a line when Plex itself was fine but its extras weren't:
+    # otherwise the Plex line already explains why nothing moved.
+    if plex_extras_status == "not checked":
+        statuses["Plex extras"] = "not checked"
     return candidates, statuses
 
 
@@ -416,11 +500,25 @@ def _status_lines(statuses: dict[str, str]) -> list[str]:
     return lines
 
 
+def _review_title(display_path: str) -> tuple[str, str]:
+    """(readable name, folder) for a Needs Review row. Release names with
+    no spaces get their dots and underscores turned into spaces; the
+    folder drops the top-level library folder ("media")."""
+    parts = display_path.split("/")
+    name = os.path.splitext(parts[-1])[0]
+    if " " not in name:
+        name = re.sub(r"[._]+", " ", name)
+    return name, " / ".join(parts[1:-1])
+
+
 def _enrich_candidate(c: OrphanCandidate) -> dict:
+    title, folder = _review_title(c.paths[0])
     return {
         "kind": "file",
         "inode": c.inode,
         "display_path": c.paths[0],
+        "title": title,
+        "folder": folder,
         "extra_paths": len(c.paths) - 1,
         "category": c.category,
         "size_gb": _format_gb(c.size_bytes),
@@ -428,6 +526,10 @@ def _enrich_candidate(c: OrphanCandidate) -> dict:
         "superseded_by": c.superseded_by,
         "tracks_sample": c.tracks_sample,
         "sidecars": [os.path.basename(sc) for sc in c.sidecars],
+        "verdict": c.verdict.kind if c.verdict else None,
+        "verdict_action": c.verdict.action if c.verdict else None,
+        "verdict_reason": c.verdict.reason if c.verdict else None,
+        "keep": bool(c.verdict and c.verdict.kind in KEEP_KINDS),
     }
 
 
@@ -483,7 +585,66 @@ def _download_units(download_candidates: list[dict]) -> list[dict]:
     return units
 
 
-_EMPTY_ORPHANS_CONTEXT = {"download_units": [], "review_candidates": [], "status_lines": [], "scanned": False}
+def _extras_groups() -> list[dict]:
+    """Extras tab rows: one header per movie/show folder, biggest first."""
+    by_folder: dict[str, list[OrphanCandidate]] = {}
+    for c in _extras_cache:
+        by_folder.setdefault(title_folder(c.paths[0]), []).append(c)
+    groups = []
+    for folder, members in by_folder.items():
+        size = sum(m.size_bytes for m in members)
+        groups.append({
+            "folder": folder,
+            "count": len(members),
+            "size_bytes": size,
+            "size_gb": _format_gb(size),
+            "files": [
+                {"name": os.path.relpath(m.paths[0], folder), "size_gb": _format_gb(m.size_bytes)}
+                for m in sorted(members, key=lambda m: m.paths[0])
+            ],
+        })
+    return sorted(groups, key=lambda g: -g["size_bytes"])
+
+
+# Needs Review's group cards, in decision order: clear-cut deletes first,
+# the files to keep next, the ones needing a look last.
+REVIEW_BUCKETS = [
+    {"kind": "junk", "label": "Delete", "title": "Probably junk",
+     "sub": "Safe to delete once you've glanced at the reason."},
+    {"kind": "wanted", "label": "Keep", "title": "Sonarr/Radarr wants it",
+     "sub": "Real content your library is missing. Import it instead of deleting it."},
+    {"kind": "plex", "label": "Keep", "title": "Plex can't see it",
+     "sub": "Bonus material in a place or under a name Plex ignores. Moving it makes it show up as an extra."},
+    {"kind": "identify", "label": "Look first", "title": "Identify it",
+     "sub": "Looks like a special, but nothing matched. Watch it, then rename it or treat it as an extra."},
+    {"kind": "call", "label": "Look first", "title": "Your call",
+     "sub": "No evidence either way."},
+]
+
+
+def _review_buckets(review_candidates: list[dict]) -> list[dict]:
+    """Every card with its count and size, empty ones included, so a group
+    you've just cleared still has a card to come back to."""
+    buckets = []
+    for b in REVIEW_BUCKETS:
+        members = [c for c in review_candidates if (c["verdict"] or "call") == b["kind"]]
+        size = sum(c["size_bytes"] for c in members)
+        buckets.append({**b, "keep": b["kind"] in KEEP_KINDS, "count": len(members),
+                        "size_bytes": size, "size_gb": _format_gb(size)})
+    return buckets
+
+
+_EMPTY_ORPHANS_CONTEXT = {
+    "download_units": [], "review_candidates": [], "review_buckets": [], "status_lines": [], "scanned": False,
+    "extras_groups": [], "extras_checked": False,
+}
+
+
+def _extras_checked(statuses: dict[str, str]) -> bool:
+    """True only when the Plex extras lookup actually ran: Plex was usable
+    and the lookup didn't fail. Otherwise Plex extras may be sitting in
+    Needs Review, and the page has to say so."""
+    return statuses.get("Plex") == "ok" and "Plex extras" not in statuses
 
 
 def _split_by_category(candidates: list[dict]) -> tuple[list[dict], list[dict]]:
@@ -535,6 +696,9 @@ async def orphans_scan(request: Request):
             {
                 "download_units": _download_units(download_candidates),
                 "review_candidates": review_candidates,
+                "review_buckets": _review_buckets(review_candidates),
+                "extras_groups": _extras_groups(),
+                "extras_checked": _extras_checked(statuses),
                 "error": None,
                 "status_lines": _status_lines(statuses),
                 "scanned": True,
@@ -742,6 +906,9 @@ async def bulk_delete_orphans(
     unique_roots = list(dict.fromkeys(group_roots))
     groups = [_group_cache[r] for r in unique_roots if r in _group_cache]
     stale_roots = [r for r in unique_roots if r not in _group_cache]
+    # Like the single delete: only inodes this page's scan actually showed
+    # can be deleted, even if the re-scan below would flag a posted one.
+    shown = set(_scan_cache)
     try:
         fresh_candidates, _ = await asyncio.to_thread(run_scan)
         fresh_by_inode = {c.inode: c for c in fresh_candidates}
@@ -776,7 +943,7 @@ async def bulk_delete_orphans(
         if inode in handled:
             continue
         attempted += 1
-        candidate = fresh_by_inode.get(inode)
+        candidate = fresh_by_inode.get(inode) if inode in shown else None
         if candidate is None:
             skipped += 1
             continue

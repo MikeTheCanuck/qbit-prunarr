@@ -8,6 +8,10 @@ configured") means nothing in that category is ever flagged as an orphan.
 """
 import os
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from verdicts import Verdict
 
 
 @dataclass
@@ -26,6 +30,9 @@ class OrphanCandidate:
     # They go with it when it's deleted; Needs Review never lists them.
     sidecars: list[str] = field(default_factory=list)
     sidecar_bytes: int = 0
+    # What to do with a Needs Review file, and why. Set by run_scan after
+    # classification; None for download-side candidates.
+    verdict: "Verdict | None" = None
 
 
 def _file_size(data_root: str, paths: list[str]) -> int:
@@ -267,7 +274,7 @@ def prune_empty_tree(data_root: str, root_rel: str, boundary: str) -> None:
         parent = os.path.dirname(parent)
 
 
-def _title_folder(path: str) -> str:
+def title_folder(path: str) -> str:
     """media/movies/<Title>/... -> media/movies/<Title>. The movie (or show)
     folder is what a file belongs to, however deep it sits inside."""
     parts = path.split("/")
@@ -301,7 +308,7 @@ def mark_superseded(
     for p in radarr_paths:
         tracked_in_dir[os.path.dirname(p)] = os.path.basename(p)
         if _is_sample(p):
-            tracked_samples_in_title.add(_title_folder(p))
+            tracked_samples_in_title.add(title_folder(p))
     for c in candidates:
         if c.category != "orphaned media":
             continue
@@ -309,7 +316,7 @@ def mark_superseded(
             continue
         if any(p in radarr_paths for p in c.paths):
             continue
-        if any(_title_folder(p) in tracked_samples_in_title for p in c.paths):
+        if any(title_folder(p) in tracked_samples_in_title for p in c.paths):
             if not any(_is_sample(p) for p in c.paths):
                 c.tracks_sample = True
             continue
@@ -380,3 +387,24 @@ def attach_sidecars(candidates: list[OrphanCandidate], data_root: str) -> None:
             os.path.getsize(os.path.join(data_root, sc)) for sc in found
             if os.path.exists(os.path.join(data_root, sc))
         )
+
+
+def split_plex_extras(
+    candidates: list[OrphanCandidate], extra_paths: set[str] | None
+) -> tuple[list[OrphanCandidate], list[OrphanCandidate]]:
+    """Pull out media candidates Plex has attached as local extras.
+
+    Plex alone vouches for these: Sonarr and Radarr never track video
+    extras, so the usual "both must confirm" rule can't apply. Any one
+    hardlink path being a Plex extra is enough. None (Plex unreachable,
+    or the extras lookup failed) moves nothing.
+    """
+    if extra_paths is None:
+        return list(candidates), []
+    kept, extras = [], []
+    for c in candidates:
+        if c.category == "orphaned media" and any(p in extra_paths for p in c.paths):
+            extras.append(c)
+        else:
+            kept.append(c)
+    return kept, extras

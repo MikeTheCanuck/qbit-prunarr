@@ -1,0 +1,26 @@
+{# One Needs Review row. Keep rows get no checkbox, so they can't ride along
+   in a bulk delete; deleting one takes the ⋯ menu's "Delete anyway…". #}
+<tr id="orphan-row-{{ c.inode }}" data-path="{{ c.display_path }}" data-size-bytes="{{ c.size_bytes }}" data-sidecars="{{ (c.sidecars or []) | length }}" data-sidecar-names='{{ (c.sidecars or []) | tojson }}'data-name="{{ c.title }}" data-action="{{ c.verdict_action or '' }}">
+  <td>{% if c.keep %}<span class="keep-mark" title="Keep">&#10003;</span>{% else %}<input type="checkbox" name="inodes" value="{{ c.inode }}" class="orphan-cb">{% endif %}</td>
+  <td><div class="name" title="{{ c.display_path }}">{{ c.title }}
+    {%- if c.extra_paths > 0 %}<span class="chip" title="Hardlinked under {{ c.extra_paths }} more path(s)">+{{ c.extra_paths }} more</span>{% endif %}
+    {%- if c.sidecars %}<span class="chip" title="Also deleted with it: {{ c.sidecars | join(', ') }}">+{{ c.sidecars | length }} sidecar{{ 's' if c.sidecars | length != 1 }}</span>{% endif %}
+    {%- if c.superseded_by and not c.verdict %}<span class="chip" title="Radarr tracks {{ c.superseded_by }} in this folder">Superseded: Radarr has a newer copy in this folder</span>{% endif %}
+    {%- if c.tracks_sample and not c.verdict %}<span class="chip" title="Radarr's file for this movie is a sample clip, so this is probably the real movie. Fix it in Radarr instead of deleting.">Radarr is tracking a sample: likely the real movie</span>{% endif %}</div>
+    {%- if c.folder %}<div class="folder">{{ c.folder }}</div>{% endif %}
+    {%- if c.verdict %}
+    <div class="next verdict-{{ c.verdict }}">
+      <div class="verdict-action">{{ c.verdict_action }}</div>
+      <div class="verdict-reason">{{ c.verdict_reason }}</div>
+    </div>
+    {%- endif %}</td>
+  <td class="size">{{ c.size_gb }} GB</td>
+  <td class="more"><button type="button" class="more-btn" title="More" aria-haspopup="true">&#8943;</button>
+    <div class="menu">
+      <button type="button" class="copy-path" data-path="{{ c.display_path }}">Copy path</button>
+      {%- if c.keep %}
+      <button type="button" class="delete-anyway" data-inode="{{ c.inode }}">Delete anyway…</button>
+      {%- endif %}
+    </div>
+  </td>
+</tr>

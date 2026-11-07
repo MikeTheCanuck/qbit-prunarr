@@ -34,7 +34,14 @@
     #scan-btn { padding: 8px 16px; background: var(--accent); color: white; border: none; border-radius: 4px; cursor: pointer; }
     #scan-btn:hover:not(:disabled) { background: var(--accent-hover); }
     #scan-btn:disabled { background: #4a4d54; color: var(--text-muted); cursor: wait; }
-    #scan-spinner { margin-left: 10px; color: var(--text-muted); }
+    #scan-status { display: inline-block; margin-left: 12px; padding: 7px 14px; border-radius: 4px; font-weight: 600;
+      background: var(--header-bg); color: var(--text); border-left: 4px solid var(--accent); }
+    #scan-status .scan-busy { display: none; }
+    #scan-status.scanned { display: none; }
+    /* Scanning goes orange, like an in-flight delete: still happening. */
+    #scan-status.htmx-request { display: inline-block; background: var(--busy); color: #1f2126; border-left-color: #1f2126; }
+    #scan-status.htmx-request .scan-idle { display: none; }
+    #scan-status.htmx-request .scan-busy { display: inline; }
     #bulk-delete-btn { padding: 8px 16px; background: var(--danger); color: white; border: none; border-radius: 4px; cursor: pointer; }
     #bulk-delete-btn:disabled { background: #4a4d54; color: var(--text-muted); cursor: default; }
     button[hx-delete] { padding: 4px 10px; background: var(--danger); color: white; border: none; border-radius: 4px; cursor: pointer; }
@@ -70,42 +77,82 @@
     .done-banner { background: #1f3326; color: #a6dcb3; padding: 10px 16px; margin-bottom: 16px; border-radius: 4px; }
     #review-delete-btn { padding: 8px 16px; background: var(--danger); color: white; border: none; border-radius: 4px; cursor: pointer; }
     #review-delete-btn:disabled { background: #4a4d54; color: var(--text-muted); cursor: default; }
-    .review-actions { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin: 0 0 8px; }
-    .review-actions .sort-modes { margin: 0; }
-    tbody.folder-head td:first-child { width: 1%; }
     .superseded { display: inline-block; margin-left: 8px; font-size: 12px; padding: 1px 8px; border-radius: 10px;
       background: #1f3326; color: #a6dcb3; border: 1px solid #2f5a3c; white-space: nowrap; }
-    .folder-hidden { display: none; }
-    .folder-toggle { background: none; border: none; color: var(--warn-text); cursor: pointer; padding: 0 8px 0 0; font-size: 1em; }
-    tbody.folder-head.expanded .group-chevron { transform: rotate(90deg); }
-    .review-actions .folder-all { margin: 0; }
-    .review-actions:has(+ #review-table:not(.folder-mode)) .folder-all { display: none; }
-    #sticky-delete { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); z-index: 20;
-      display: flex; align-items: center; gap: 14px; padding: 10px 14px; border-radius: 10px;
-      background: #3a2224; border: 2px solid var(--danger); box-shadow: 0 0 0 5px rgba(200,48,42,.28), 0 12px 34px rgba(0,0,0,.6);
-      animation: sticky-in .25s ease-out;
+    /* Fixed widths, so Size and Delete line up between tables. */
+    th.col-size { width: 7em; white-space: nowrap; }
+    th.col-delete { width: 6em; }
+    th.col-more { width: 44px; }
+    /* Needs Review rows: name first, then where it is, then what to do. */
+    #review-table td { vertical-align: top; padding-top: 12px; padding-bottom: 12px; border-bottom-color: #464a52; }
+    #review-table tbody.orphan-unit:hover td { background: var(--row-hover); }
+    #review-table th:first-child { width: 38px; }
+    #review-table td.size { white-space: nowrap; text-align: right; color: var(--text-muted); }
+    #review-table th.col-size { text-align: right; }
+    #review-table .name { font-weight: 600; font-size: 15px; color: #f1f2f4; overflow-wrap: anywhere; }
+    #review-table .folder { color: var(--text-muted); font-size: 12px; margin-top: 2px; overflow-wrap: anywhere; }
+    /* The next step hangs off the name: a rule in the group's colour, plain text. */
+    #review-table .next { margin-top: 8px; padding: 1px 0 1px 10px; border-left: 3px solid currentColor; }
+    #review-table .next .verdict-action { color: var(--text); font-weight: 400; font-size: 13.5px; margin-top: 0; overflow-wrap: anywhere; }
+    .chip { display: inline-block; margin-left: 8px; font-size: 11.5px; font-weight: 500; padding: 1px 7px; border-radius: 10px;
+      background: var(--border); color: var(--text-muted); vertical-align: 1px; cursor: help; }
+    #review-table tbody.orphan-unit tr.selected td { background: #3a2a2c; }
+    .keep-mark { display: block; text-align: center; color: #a6dcb3; font-size: 15px; }
+    td.more { position: relative; }
+    .more-btn { background: none; border: 1px solid transparent; color: var(--text-muted); border-radius: 4px; cursor: pointer;
+      font-size: 17px; line-height: 1; padding: 2px 7px; }
+    .more-btn:hover, .more.open .more-btn { border-color: var(--border); color: var(--text); background: var(--header-bg); }
+    .menu { display: none; position: absolute; right: 8px; top: 34px; z-index: 5; background: var(--header-bg);
+      border: 1px solid var(--border); border-radius: 6px; box-shadow: 0 8px 24px rgba(0,0,0,.5); min-width: 170px; padding: 4px; }
+    .more.open .menu { display: block; }
+    .menu button { display: block; width: 100%; text-align: left; font: inherit; font-size: 13.5px; background: none; border: 0;
+      color: var(--text); padding: 7px 10px; border-radius: 4px; cursor: pointer; }
+    .menu button:hover { background: var(--row-hover); }
+    .menu button.delete-anyway { color: #f5b8bb; }
+    /* The selection bar: neutral, with red kept for its Delete button. */
+    #sticky-delete { position: fixed; left: 50%; bottom: 18px; transform: translateX(-50%); z-index: 20;
+      display: flex; align-items: center; gap: 14px; padding: 10px 12px 10px 18px; border-radius: 10px;
+      background: #2d2f35; border: 1px solid #4a4d54; box-shadow: 0 12px 34px rgba(0,0,0,.6);
       color: var(--text); font-weight: 600; max-width: calc(100vw - 32px); }
     #sticky-delete[hidden] { display: none; }
-    @keyframes sticky-in { from { transform: translate(-50%, 24px); opacity: 0; } to { transform: translate(-50%, 0); opacity: 1; } }
-    #sticky-delete-btn { padding: 8px 16px; background: var(--danger); color: #fff; border: none; border-radius: 4px; cursor: pointer; font-weight: 600; }
-    #sticky-delete-btn:hover { background: var(--danger-hover); }
+    #sticky-summary { white-space: nowrap; }
+    #sticky-clear, #dd-cancel { font: inherit; font-weight: 600; padding: 8px 16px; border-radius: 4px; cursor: pointer;
+      background: var(--panel-bg); color: var(--text); border: 1px solid var(--border); }
+    #sticky-clear:hover, #dd-cancel:hover { background: var(--row-hover); }
+    #sticky-delete-btn, #dd-ok { font: inherit; padding: 8px 16px; background: var(--danger); color: #fff; border: 1px solid var(--danger);
+      border-radius: 4px; cursor: pointer; font-weight: 600; }
+    #sticky-delete-btn:hover, #dd-ok:hover { background: var(--danger-hover); }
+    #delete-dialog { background: var(--panel-bg); color: var(--text); border: 1px solid var(--border); border-radius: 8px;
+      width: 620px; max-width: calc(100vw - 32px); padding: 0; box-shadow: 0 20px 60px rgba(0,0,0,.6); }
+    #delete-dialog::backdrop { background: rgba(0,0,0,.6); }
+    #delete-dialog h3 { margin: 0; padding: 14px 18px; border-bottom: 1px solid var(--border); font-size: 17px; }
+    #delete-dialog > p, #delete-dialog ul { margin: 12px 18px; }
+    #delete-dialog ul { padding-left: 20px; max-height: 220px; overflow: auto; font-size: 13px; }
+    #delete-dialog li { margin: 3px 0; overflow-wrap: anywhere; }
+    #delete-dialog li .s { color: var(--text-muted); }
+    .dd-keep { background: var(--warn-bg); border-left: 3px solid var(--warn-border); color: var(--warn-text); padding: 8px 12px; border-radius: 3px; }
+    .dd-warn { background: #3a2224; border-left: 3px solid var(--danger); padding: 8px 12px; font-size: 13.5px; border-radius: 3px; }
+    #delete-dialog footer { display: flex; justify-content: flex-end; gap: 10px; padding: 12px 18px; border-top: 1px solid var(--border); margin-top: 14px; }
     body { padding-bottom: 90px; }
     .sidecars { margin-left: 8px; font-size: 12px; color: var(--text-muted); white-space: nowrap; cursor: help; }
     .tracks-sample { display: inline-block; margin-left: 8px; font-size: 12px; padding: 1px 8px; border-radius: 10px;
       background: var(--warn-bg); color: var(--warn-text); border: 1px solid var(--warn-border); white-space: nowrap; }
-    tbody.folder-head .superseded, tbody.folder-head .tracks-sample { font-weight: 600; }
     .not-scanned { color: var(--text-muted); margin: 14px 0 0; }
-    .sort-modes { color: var(--warn-text); margin: 0 0 8px; }
-    .sort-mode { font: inherit; font-size: 13px; background: var(--panel-bg); color: var(--text-muted); border: 1px solid var(--border);
-      border-radius: 4px; padding: 3px 10px; cursor: pointer; margin-left: 4px; }
-    .sort-mode.active { color: var(--text); border-color: var(--warn-border); background: var(--header-bg); font-weight: 600; }
-    tbody.folder-head td { background: var(--header-bg); color: var(--warn-text); font-weight: 600; padding-top: 10px;
-      border-top: 2px solid var(--warn-border); }
-    tbody.folder-head .folder-meta { color: var(--text-muted); font-weight: 400; margin-left: 8px; }
-    #review-table.folder-mode tbody.orphan-unit td:nth-child(2) { padding-left: 28px; }
     /* In-flight delete: every delete re-scans first (~15s), so show it. */
     .deleting td { opacity: 0.55; }
     .deleting button { cursor: progress; }
+    /* A review row being deleted says so in words, undimmed, in the busy colour. */
+    #review-table .deleting td { opacity: 1; }
+    #review-table .deleting td > :not(.row-status) { opacity: 0.45; }
+    #review-table .deleting td.size { color: #6b7076; }
+    #review-table .deleting .more-btn { visibility: hidden; }
+    .row-status { margin-top: 8px; padding: 6px 10px; border-left: 3px solid var(--busy); background: #3a2c1a;
+      color: #f0b46e; font-size: 13.5px; font-weight: 600; border-radius: 3px; }
+    .spin { display: inline-block; width: 11px; height: 11px; margin-right: 8px; vertical-align: -1px;
+      border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin 0.8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #delete-dialog li.sc { list-style: none; margin-left: 30px; color: var(--text-muted); }
+    #delete-dialog li.sc .chip { cursor: default; }
     /* In-flight deletes go orange: still happening, not yet done or failed,
        and visibly different from the red "Delete" they started as. */
     button.busy, button.busy:hover, button.busy:disabled { background: var(--busy) !important; color: #1f2126 !important;
@@ -122,7 +169,42 @@
     }
     .needs-review h2 { color: var(--warn-text); margin-top: 20px; }
     .needs-review .section-subtitle { color: var(--warn-text); opacity: 0.85; }
+    .extras-unchecked { color: var(--warn-text); font-weight: 600; margin: 0 0 12px; max-width: 700px; }
     .needs-review table { background: var(--panel-bg); }
+    .verdict-action { font-weight: 600; margin-top: 3px; }
+    .verdict-reason { font-size: 12.5px; color: var(--text-muted); margin-top: 2px; }
+    .verdict-junk { color: #f5b8bb; } .verdict-wanted { color: #9cc3f5; } .verdict-plex { color: #a6dcb3; }
+    .verdict-identify { color: #c9b8f5; } .verdict-call { color: var(--warn-text); }
+    /* Group cards: one per verdict, in each verdict's colour. */
+    .k-junk { --fg: #f5b8bb; --line: #c8302a; } .k-wanted { --fg: #9cc3f5; --line: #5a8fd9; }
+    .k-plex { --fg: #a6dcb3; --line: #2f8f5b; } .k-identify { --fg: #c9b8f5; --line: #8c6ad9; }
+    .k-call { --fg: var(--warn-text); --line: var(--warn-border); }
+    .buckets { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; margin: 0 0 14px; }
+    .bucket { display: block; text-align: left; font: inherit; color: var(--text); background: var(--panel-bg);
+      border: 1px solid var(--border); border-top: 3px solid var(--line); border-radius: 6px; padding: 10px 12px; cursor: pointer; }
+    .bucket:hover { background: var(--row-hover); }
+    .bucket[aria-pressed="true"] { background: var(--header-bg); border-color: var(--line); box-shadow: inset 0 0 0 1px var(--line); }
+    .bucket span { display: block; }
+    .b-kind { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--text-muted); margin-bottom: 4px; }
+    .b-title { color: var(--fg); font-weight: 700; font-size: 14.5px; }
+    .b-meta { color: var(--text-muted); font-size: 12.5px; margin-top: 3px; }
+    @media (max-width: 760px) { .buckets { grid-template-columns: repeat(2, 1fr); } }
+    .group-head { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; padding: 12px 14px; background: var(--header-bg);
+      border-top: 2px solid var(--line); border-radius: 6px 6px 0 0; }
+    .group-head[hidden] { display: none; }
+    .g-title { color: var(--fg); font-weight: 700; font-size: 17px; }
+    .g-sub { color: var(--text-muted); font-size: 13.5px; flex: 1 1 360px; }
+    .g-mode { font-size: 12.5px; color: var(--text-muted); white-space: nowrap; }
+    .bucket-hidden { display: none; }
+    .group-empty { padding: 24px; margin: 0; text-align: center; color: var(--text-muted); background: var(--panel-bg); }
+    .tabs button.extras-tab[aria-selected="true"] { border-top-color: #2f8f5b; color: #a6dcb3; }
+    .tabs button.extras-tab[aria-selected="true"] .tab-count { background: #2f8f5b; }
+    .extras-box { background: #1b2a21; border: 2px solid #2f5a3c; border-radius: 6px; padding: 4px 20px 20px; }
+    .extras-box h2 { color: #a6dcb3; margin-top: 20px; }
+    .extras-box .section-subtitle { color: #a6dcb3; opacity: 0.85; }
+    tbody.extras-head td { background: var(--header-bg); color: #a6dcb3; font-weight: 600; padding-top: 10px; border-top: 2px solid #2f5a3c; }
+    tbody.extras-head .folder-meta { color: var(--text-muted); font-weight: 400; margin-left: 12px; }
+    #extras-table tr.extras-file td:first-child { padding-left: 32px; color: var(--text-muted); }
   </style>
 </head>
 <body>
@@ -135,10 +217,15 @@
     <ul>{% for p in deleted_paths %}<li>{{ p }}</li>{% endfor %}</ul></details>{% endif %}
 </div>{% endif %}
 <button id="scan-btn" hx-post="/orphans/scan" hx-target="#scan-results" hx-swap="outerHTML" hx-select="#scan-results"
-        hx-indicator="#scan-spinner" hx-disabled-elt="this">
+        hx-select-oob="#scan-status" hx-indicator="#scan-status" hx-disabled-elt="this">
   Scan Now
 </button>
-<span id="scan-spinner" class="htmx-indicator">Scanning — this can take a while on a large library…</span>
+{# One status message for the whole scan: "Not scanned yet" before the first
+   scan, "Scanning…" while one runs (htmx adds .htmx-request), nothing after. #}
+<span id="scan-status"{% if scanned %} class="scanned"{% endif %}>
+  <span class="scan-idle">Not scanned yet. Press <b>Scan Now</b> to find orphans.</span>
+  <span class="scan-busy">Scanning — this can take a while on a large library…</span>
+</span>
 
 <div id="scan-results">
   {% if error %}<div class="error-banner">{{ error }}</div>{% endif %}
@@ -161,11 +248,12 @@
       <span class="tab-count">{{ download_units | length }} · {{ "%.1f" % (download_bytes / 1e9) }} GB</span>{% endif %}</button>
     <button type="button" role="tab" data-tab="review" class="review-tab">Needs Review{% if scanned %}
       <span class="tab-count">{{ review_candidates | length }} · {{ "%.1f" % (review_bytes / 1e9) }} GB</span>{% endif %}</button>
+    {% set extras_count = extras_groups | sum(attribute="count") %}
+    {% set extras_bytes = extras_groups | sum(attribute="size_bytes") %}
+    <button type="button" role="tab" data-tab="extras" class="extras-tab">Extras{% if scanned %}
+      <span class="tab-count">{{ extras_count }} · {{ "%.1f" % (extras_bytes / 1e9) }} GB</span>{% endif %}</button>
   </nav>
 
-  {% if not scanned %}
-  <p class="not-scanned">Not scanned yet. Press <b>Scan Now</b> to find orphans.</p>
-  {% endif %}
   <section class="tab-panel" data-panel="download" role="tabpanel">
   <h2>Unlinked Downloads</h2>
   <p class="section-subtitle">Not referenced by any active torrent — generally safe to reclaim.</p>
@@ -177,8 +265,8 @@
         <tr>
           <th><input type="checkbox" id="select-all-download"></th>
           <th class="sortable" data-sort="path">Path</th>
-          <th class="sortable" data-sort="size">Size</th>
-          <th>Delete</th>
+          <th class="sortable col-size" data-sort="size">Size</th>
+          <th class="col-delete">Delete</th>
         </tr>
       </thead>
       {% for u in download_units %}
@@ -198,40 +286,92 @@
   <section class="tab-panel" data-panel="review" role="tabpanel">
   <div class="needs-review">
     <h2>Needs Review</h2>
-    <p class="section-subtitle">Not in your library: Sonarr, Radarr and Plex don't know about these files. Two likely explanations: it's a safe duplicate already tracked elsewhere, or it's real content that never got imported. Check each one before deleting — don't assume either way.</p>
+    <p class="section-subtitle">Files that Sonarr, Radarr and Plex don't account for, sorted by what to do about them.</p>
+    {% if scanned and not extras_checked %}
+    <p class="extras-unchecked" id="extras-unchecked">Plex extras couldn't be checked this scan, so some files here may be extras Plex already shows.</p>
+    {% endif %}
+    {% if scanned and not review_candidates %}
+    <p class="not-scanned">Nothing needs review.</p>
+    {% else %}
+    {% if scanned %}
+    {# One group on screen at a time: the script shows the picked card's rows. #}
+    <div id="review-buckets" class="buckets">
+      {% for b in review_buckets %}
+      <button type="button" class="bucket k-{{ b.kind }}" data-kind="{{ b.kind }}" aria-pressed="false">
+        <span class="b-kind">{{ b.label }}</span><span class="b-title">{{ b.title }}</span>
+        <span class="b-meta">{{ b.count }} file{{ 's' if b.count != 1 }} · {{ b.size_gb }} GB</span></button>
+      {% endfor %}
+    </div>
+    {% for b in review_buckets %}
+    <div class="group-head k-{{ b.kind }}" data-kind="{{ b.kind }}" hidden>
+      <span class="g-title">{{ b.title }}</span><span class="g-sub">{{ b.sub }}</span>
+      <span class="g-mode">{% if b.keep %}Nothing to delete here. Each file lists its next step.{% else %}Tick the ones to delete.{% endif %}</span>
+    </div>
+    {% endfor %}
+    {% endif %}
     <form method="post" action="/orphans/delete" id="review-form">
-      <div class="review-actions">
-        <button type="submit" id="review-delete-btn" disabled>Delete selected</button>
-        <p class="sort-modes">Show:
-          <button type="button" class="sort-mode" data-mode="folder">Grouped by folder</button>
-          <button type="button" class="sort-mode" data-mode="flat">Flat list</button></p>
-        <p class="folder-all"><button type="button" class="sort-mode" data-folders="expand">Expand all</button>
-          <button type="button" class="sort-mode" data-folders="collapse">Collapse all</button></p>
-      </div>
+      {# The bottom bar is the one visible Delete; it submits through this. #}
+      <button type="submit" id="review-delete-btn" hidden disabled>Delete selected</button>
       <table id="review-table">
         <thead>
           <tr>
             <th><input type="checkbox" id="select-all-review"></th>
-            <th class="sortable" data-sort="path">Path</th>
-            <th class="sortable" data-sort="size">Size</th>
-            <th>Delete</th>
+            <th class="sortable" data-sort="path">File</th>
+            <th class="sortable col-size" data-sort="size">Size</th>
+            <th class="col-more"></th>
           </tr>
         </thead>
         {% for c in review_candidates %}
-          <tbody class="orphan-unit" data-path="{{ c.display_path }}" data-size-bytes="{{ c.size_bytes }}">
-            {% include "_orphan_row.html" %}
+          <tbody class="orphan-unit" data-verdict="{{ c.verdict or 'call' }}" data-path="{{ c.display_path }}" data-size-bytes="{{ c.size_bytes }}">
+            {% include "_review_row.html" %}
           </tbody>
         {% endfor %}
       </table>
+      <p class="group-empty" hidden>Nothing left in this group.</p>
     </form>
+    {% endif %}
+  </div>
+  </section>
+
+  <section class="tab-panel" data-panel="extras" role="tabpanel">
+  <div class="extras-box">
+    <h2>Extras</h2>
+    <p class="section-subtitle">Plex has these attached as extras to a movie or show, so they're kept on purpose. Listed for reference only: nothing here can be deleted from this page.</p>
+    {% if extras_groups %}
+    <table id="extras-table">
+      <thead><tr><th>Path</th><th>Size</th></tr></thead>
+      {% for g in extras_groups %}
+      <tbody class="extras-head"><tr><td colspan="2">{{ g.folder }}/<span class="folder-meta">{{ g.count }} extra{{ 's' if g.count != 1 }} · {{ g.size_gb }} GB</span></td></tr></tbody>
+      <tbody>{% for f in g.files %}<tr class="extras-file"><td>{{ f.name }}</td><td>{{ f.size_gb }} GB</td></tr>{% endfor %}</tbody>
+      {% endfor %}
+    </table>
+    {% elif scanned and extras_checked %}
+    <p class="not-scanned">No Plex extras among the files this scan found.</p>
+    {% elif scanned %}
+    <p class="not-scanned">Plex extras couldn't be checked this scan, so any extras Plex shows may be sitting in Needs Review instead.</p>
+    {% endif %}
   </div>
   </section>
 </div>
 
 <div id="sticky-delete" hidden>
   <span id="sticky-summary"></span>
+  <button type="button" id="sticky-clear">Clear</button>
   <button type="button" id="sticky-delete-btn">Delete selected</button>
 </div>
+
+{# Needs Review's confirm: a real list of what's going, not a browser box. #}
+<dialog id="delete-dialog" aria-labelledby="dd-title">
+  <h3 id="dd-title"></h3>
+  <p class="dd-keep" hidden></p>
+  <p>These files will be removed:</p>
+  <ul id="dd-list"></ul>
+  <p class="dd-warn">Deleted files can't be recovered. Each one is re-checked first, and anything that has since shown up in Sonarr, Radarr or Plex is skipped.</p>
+  <footer>
+    <button type="button" id="dd-cancel" autofocus>Cancel</button>
+    <button type="button" id="dd-ok" class="danger">Delete</button>
+  </footer>
+</dialog>
 
 <script>
   // Default sort: size descending, so the real space-hogs surface above
@@ -242,132 +382,137 @@
   // Review tables sort independently of each other.
   var sortStates = {
     'download-table': { column: 'size', dir: 'desc' },
-    // Needs Review defaults to grouping by parent folder: orphans from one
-    // show or movie (a whole season of extras, say) need one decision
-    // together, not scattered by size among everything else.
-    'review-table': { column: 'folder', dir: 'asc' }
+    // Path order keeps one release's extras together inside a group.
+    'review-table': { column: 'path', dir: 'asc' }
   };
-  try {
-    var savedMode = localStorage.getItem('orphans-review-mode');
-    if (savedMode === 'flat') { sortStates['review-table'] = { column: 'size', dir: 'desc' }; }
-  } catch (e) {}
 
-  // Group by the movie or show folder (media/<library>/<Title>), not the
-  // immediate parent: a show's extras spread across Season and Featurette
-  // subfolders belong to one decision.
-  function titleFolder(path) {
-    var parts = path.split('/');
-    if (parts.length > 3 && parts[0] === 'media') { return parts.slice(0, 3).join('/'); }
-    return parentDir(path);
-  }
-
-  function parentDir(path) {
-    var i = path.lastIndexOf('/');
-    return i > 0 ? path.slice(0, i) : '';
-  }
+  // Keep groups get no select-all: ticking a whole "keep this" group by
+  // accident is exactly the mistake this view exists to prevent.
+  var KEEP = { wanted: true, plex: true };
 
   function formatGB(bytes) { return (bytes / 1e9).toFixed(2) + ' GB'; }
 
-  // Folder mode: units sorted by folder (biggest folder first), each folder
-  // introduced by a header row with its file count and total size.
-  function applyFolderGrouping(table, units) {
-    var folders = {};
-    units.forEach(function (u) {
-      var dir = titleFolder(u.dataset.path || '');
-      (folders[dir] = folders[dir] || { units: [], bytes: 0 }).units.push(u);
-      folders[dir].bytes += parseInt(u.dataset.sizeBytes, 10) || 0;
+  // Needs Review shows one verdict group at a time. Rows in other groups
+  // are only hidden, so ticks there still count and still get posted.
+  var BUCKET_KEY = 'orphans-review-bucket';
+  var currentBucket = null;
+  function unitKind(u) { return u.dataset.verdict || 'call'; }
+  function liveUnit(u) { return !!u.querySelector('tr[data-size-bytes]'); }
+  function reviewUnits() {
+    var table = document.getElementById('review-table');
+    return table ? Array.prototype.slice.call(table.querySelectorAll(':scope > tbody.orphan-unit')) : [];
+  }
+
+  // Card counts come from the rows still on the page, so a single delete
+  // (or a re-check that skips) updates them without a rescan.
+  function recountBuckets() {
+    var counts = {};
+    var bytes = {};
+    reviewUnits().forEach(function (u) {
+      if (!liveUnit(u)) { return; }
+      var k = unitKind(u);
+      counts[k] = (counts[k] || 0) + 1;
+      bytes[k] = (bytes[k] || 0) + (parseInt(u.dataset.sizeBytes, 10) || 0);
     });
-    var cols = table.querySelectorAll('thead th').length;
-    Object.keys(folders)
-      .sort(function (a, b) { return folders[b].bytes - folders[a].bytes || (a < b ? -1 : 1); })
-      .forEach(function (dir) {
-        var f = folders[dir];
-        var head = document.createElement('tbody');
-        head.className = 'folder-head';
-        head.dataset.folder = dir;
-        var row = head.insertRow();
-        var cbCell = row.insertCell();
-        var folderCb = document.createElement('input');
-        folderCb.type = 'checkbox';
-        folderCb.className = 'folder-cb';
-        folderCb.title = 'Select every file in this folder';
-        cbCell.appendChild(folderCb);
-        var cell = row.insertCell();
-        cell.colSpan = cols - 1;
-        var toggle = document.createElement('button');
-        toggle.type = 'button';
-        toggle.className = 'folder-toggle';
-        toggle.innerHTML = '<span class="group-chevron">&#9654;</span>';
-        cell.appendChild(toggle);
-        cell.appendChild(document.createTextNode((dir || '(top level)') + '/'));
-        var meta = document.createElement('span');
-        meta.className = 'folder-meta';
-        meta.textContent = f.units.length + (f.units.length === 1 ? ' file · ' : ' files · ') + formatGB(f.bytes);
-        cell.appendChild(meta);
-        // Same badges as the rows, so a collapsed folder still shows them.
-        var superseded = f.units.filter(function (u) { return u.querySelector('.superseded'); }).length;
-        if (superseded) {
-          var sb = document.createElement('span');
-          sb.className = 'superseded';
-          sb.textContent = superseded === f.units.length ? 'All superseded' : superseded + ' superseded';
-          cell.appendChild(sb);
-        }
-        if (f.units.some(function (u) { return u.querySelector('.tracks-sample'); })) {
-          var tb = document.createElement('span');
-          tb.className = 'tracks-sample';
-          tb.textContent = 'Radarr is tracking a sample';
-          cell.appendChild(tb);
-        }
-        f.units.forEach(function (u) { u.dataset.folder = dir; });
-        setFolderOpen(table, head, f.units, openFolders().has(dir));
-        table.appendChild(head);
-        f.units
-          .sort(function (a, b) { return a.dataset.path < b.dataset.path ? -1 : 1; })
-          .forEach(function (u) { table.appendChild(u); });
-        refreshFolderState(table, dir);
-      });
+    document.querySelectorAll('#review-buckets .bucket').forEach(function (card) {
+      var n = counts[card.dataset.kind] || 0;
+      card.querySelector('.b-meta').textContent =
+        n + (n === 1 ? ' file · ' : ' files · ') + formatGB(bytes[card.dataset.kind] || 0);
+    });
+    return counts;
   }
 
-  // Which folders are expanded, by path, so a rescan or reload keeps them.
-  // Folders start collapsed: one line each until you open them.
-  var OPEN_KEY = 'orphans-review-open';
-  function openFolders() {
-    try { return new Set(JSON.parse(localStorage.getItem(OPEN_KEY)) || []); } catch (e) { return new Set(); }
-  }
-  function saveOpenFolders(set) {
-    try { localStorage.setItem(OPEN_KEY, JSON.stringify(Array.from(set))); } catch (e) {}
-  }
-  function setFolderOpen(table, head, units, open) {
-    head.classList.toggle('expanded', open);
-    units.forEach(function (u) { u.classList.toggle('folder-hidden', !open); });
-  }
-  function toggleFolder(head, open) {
-    var table = head.closest('table');
-    var dir = head.dataset.folder;
-    setFolderOpen(table, head, folderUnits(table, dir), open);
-    var set = openFolders();
-    if (open) { set.add(dir); } else { set.delete(dir); }
-    saveOpenFolders(set);
-  }
-
-  function folderUnits(table, dir) {
-    return Array.prototype.filter.call(table.querySelectorAll(':scope > tbody.orphan-unit'),
-      function (u) { return u.dataset.folder === dir; });
-  }
-
-  // Same tri-state as the group headers: checked when every file in the
-  // folder is ticked, "some" (indeterminate) when only part of it is.
-  function refreshFolderState(table, dir) {
-    var head = Array.prototype.find.call(table.querySelectorAll(':scope > tbody.folder-head'),
-      function (h) { return h.dataset.folder === dir; });
-    if (!head) { return; }
+  function refreshSelectAllReview() {
+    var all = document.getElementById('select-all-review');
+    if (!all) { return; }
+    all.hidden = !!KEEP[currentBucket];
     var cbs = [];
-    folderUnits(table, dir).forEach(function (u) { cbs.push.apply(cbs, u.querySelectorAll('.orphan-cb')); });
+    reviewUnits().forEach(function (u) {
+      if (!u.classList.contains('bucket-hidden')) { cbs.push.apply(cbs, u.querySelectorAll('.orphan-cb')); }
+    });
     var checked = cbs.filter(function (c) { return c.checked; }).length;
-    var folderCb = head.querySelector('.folder-cb');
-    folderCb.checked = checked > 0 && checked === cbs.length;
-    folderCb.indeterminate = checked > 0 && checked < cbs.length;
+    all.checked = checked > 0 && checked === cbs.length;
+    all.indeterminate = checked > 0 && checked < cbs.length;
   }
+
+  function showBucket(kind) {
+    currentBucket = kind;
+    document.querySelectorAll('#review-buckets .bucket').forEach(function (card) {
+      card.setAttribute('aria-pressed', card.dataset.kind === kind ? 'true' : 'false');
+    });
+    document.querySelectorAll('.group-head').forEach(function (h) { h.hidden = h.dataset.kind !== kind; });
+    var shown = 0;
+    reviewUnits().forEach(function (u) {
+      var hide = unitKind(u) !== kind;
+      u.classList.toggle('bucket-hidden', hide);
+      if (!hide && liveUnit(u)) { shown++; }
+    });
+    var empty = document.querySelector('.group-empty');
+    if (empty) { empty.hidden = shown > 0; }
+    refreshSelectAllReview();
+    try { localStorage.setItem(BUCKET_KEY, kind); } catch (e) {}
+  }
+
+  // The remembered group if it still has files, else the first one that does.
+  function pickBucket() {
+    var cards = document.querySelectorAll('#review-buckets .bucket');
+    if (!cards.length) { return; }
+    var counts = recountBuckets();
+    var saved = null;
+    try { saved = localStorage.getItem(BUCKET_KEY); } catch (e) {}
+    if (!saved || !counts[saved]) {
+      var first = Array.prototype.find.call(cards, function (c) { return counts[c.dataset.kind]; });
+      saved = first ? first.dataset.kind : 'junk';
+    }
+    showBucket(saved);
+  }
+
+  document.addEventListener('click', function (e) {
+    var card = e.target.closest('#review-buckets .bucket');
+    if (!card) { return; }
+    showBucket(card.dataset.kind);
+    refreshSticky();
+  });
+
+  // Row ⋯ menus: one open at a time, closed by any click outside.
+  document.addEventListener('click', function (e) {
+    // Menu items close their own menu, after showing feedback like "Copied".
+    if (e.target.closest('.menu')) { return; }
+    var btn = e.target.closest('.more-btn');
+    document.querySelectorAll('.more.open').forEach(function (m) {
+      if (!btn || m !== btn.parentNode) { m.classList.remove('open'); }
+    });
+    if (btn) { btn.parentNode.classList.toggle('open'); }
+  });
+
+  // The app runs over plain http on the LAN, where navigator.clipboard
+  // doesn't exist, so fall back to the old textarea copy.
+  function copyText(text) {
+    if (window.isSecureContext && navigator.clipboard) { return navigator.clipboard.writeText(text); }
+    var ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    document.execCommand('copy');
+    ta.remove();
+    return Promise.resolve();
+  }
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest('.copy-path');
+    if (!btn) { return; }
+    copyText(btn.dataset.path).then(function () {
+      btn.textContent = 'Copied';
+      setTimeout(function () { btn.textContent = 'Copy path'; btn.closest('.more').classList.remove('open'); }, 1500);
+    });
+  });
+
+  document.addEventListener('change', function (e) {
+    if (e.target.closest('#review-table') && e.target.classList.contains('orphan-cb')) {
+      e.target.closest('tr').classList.toggle('selected', e.target.checked);
+    }
+  });
 
   function refreshReviewButton() {
     var btn = document.getElementById('review-delete-btn');
@@ -385,17 +530,6 @@
     var table = document.getElementById(tableId);
     if (!table) { return; }
     var units = Array.prototype.slice.call(table.querySelectorAll(':scope > tbody.orphan-unit'));
-    table.querySelectorAll(':scope > tbody.folder-head').forEach(function (h) { h.remove(); });
-    units.forEach(function (u) { u.classList.remove('folder-hidden'); });
-    table.classList.toggle('folder-mode', state.column === 'folder');
-    document.querySelectorAll('.sort-mode').forEach(function (b) {
-      b.classList.toggle('active', (b.dataset.mode === 'folder') === (state.column === 'folder'));
-    });
-    if (state.column === 'folder') {
-      applyFolderGrouping(table, units);
-      table.querySelectorAll('th[data-sort]').forEach(function (th) { th.classList.remove('sort-asc', 'sort-desc'); });
-      return;
-    }
     units.sort(function (a, b) {
       var av = cellValue(a, state.column), bv = cellValue(b, state.column);
       var cmp = av < bv ? -1 : av > bv ? 1 : 0;
@@ -421,33 +555,8 @@
       state.dir = state.dir === 'asc' ? 'desc' : 'asc';
     } else {
       sortStates[tableId] = { column: column, dir: column === 'size' ? 'desc' : 'asc' };
-      if (tableId === 'review-table') {
-        try { localStorage.setItem('orphans-review-mode', 'flat'); } catch (e2) {}
-      }
     }
     applySort(tableId);
-  });
-
-  document.addEventListener('click', function (e) {
-    var t = e.target.closest('.folder-toggle');
-    if (t) {
-      var head = t.closest('tbody.folder-head');
-      toggleFolder(head, !head.classList.contains('expanded'));
-      return;
-    }
-    var all = e.target.closest('[data-folders]');
-    if (!all) { return; }
-    var open = all.dataset.folders === 'expand';
-    document.querySelectorAll('#review-table > tbody.folder-head').forEach(function (h) { toggleFolder(h, open); });
-  });
-
-  document.addEventListener('click', function (e) {
-    var btn = e.target.closest('.sort-mode');
-    if (!btn) { return; }
-    sortStates['review-table'] = btn.dataset.mode === 'folder'
-      ? { column: 'folder', dir: 'asc' } : { column: 'size', dir: 'desc' };
-    try { localStorage.setItem('orphans-review-mode', btn.dataset.mode); } catch (e2) {}
-    applySort('review-table');
   });
 
   document.addEventListener('click', function (e) {
@@ -510,21 +619,14 @@
     } else if (e.target.classList && e.target.classList.contains('orphan-cb')) {
       syncGroupCheckbox(e.target);
     }
+    // Needs Review's select-all covers only the group on screen.
     if (e.target.id === 'select-all-review') {
-      document.querySelectorAll('#review-table .orphan-cb, #review-table .folder-cb').forEach(function (cb) {
+      document.querySelectorAll('#review-table > tbody.orphan-unit:not(.bucket-hidden) .orphan-cb').forEach(function (cb) {
         cb.checked = e.target.checked;
-        cb.indeterminate = false;
+        cb.closest('tr').classList.toggle('selected', cb.checked);
       });
-    } else if (e.target.classList && e.target.classList.contains('folder-cb')) {
-      var table = e.target.closest('table');
-      var dir = e.target.closest('tbody.folder-head').dataset.folder;
-      folderUnits(table, dir).forEach(function (u) {
-        u.querySelectorAll('.orphan-cb').forEach(function (cb) { cb.checked = e.target.checked; });
-      });
-      refreshFolderState(table, dir);
     } else if (e.target.closest('#review-table') && e.target.classList.contains('orphan-cb')) {
-      var unit = e.target.closest('tbody.orphan-unit');
-      if (unit && unit.dataset.folder !== undefined) { refreshFolderState(e.target.closest('table'), unit.dataset.folder); }
+      refreshSelectAllReview();
     }
     if (e.target.closest('#download-table')) { refreshBulkButton(); }
     if (e.target.closest('#review-table')) { refreshReviewButton(); }
@@ -533,50 +635,160 @@
   document.addEventListener('htmx:afterSwap', refreshBulkButton);
   document.addEventListener('htmx:afterSwap', refreshReviewButton);
 
-  // Sticky bar: the top "Delete selected" scrolls away, so whenever the
-  // visible tab has a selection, show its count and size at the bottom.
-  // Its button just clicks the tab's real one, so the same confirm and
-  // busy handling apply. Group headers are skipped when counting: their
-  // children are ticked in lockstep and carry the sizes.
+  // The bottom bar: whenever the visible tab has a selection, show its
+  // count and size, plus Clear and the tab's Delete. On Needs Review it is
+  // the only Delete; ticks in other groups count too, since they still post.
+  // Group headers are skipped when counting: their children are ticked in
+  // lockstep and carry the sizes.
   function activeTableId() {
     var active = document.querySelector('.tab-panel.active');
     if (!active) { return null; }
-    return active.dataset.panel === 'review' ? 'review-table' : 'download-table';
+    if (active.dataset.panel === 'review') { return 'review-table'; }
+    if (active.dataset.panel === 'download') { return 'download-table'; }
+    return null;
+  }
+  function pickedRows(id) {
+    return Array.prototype.filter.call(
+      document.querySelectorAll('#' + id + ' .orphan-cb:checked'),
+      function (cb) { return !cb.closest('tr.group-header'); }).map(function (cb) { return cb.closest('tr'); });
   }
   function refreshSticky() {
     var bar = document.getElementById('sticky-delete');
     var id = activeTableId();
-    var picked = id ? Array.prototype.filter.call(
-      document.querySelectorAll('#' + id + ' .orphan-cb:checked'),
-      function (cb) { return !cb.closest('tr.group-header'); }) : [];
-    if (!picked.length) { bar.hidden = true; return; }
+    var rows = id ? pickedRows(id) : [];
+    if (!rows.length) { bar.hidden = true; return; }
     var bytes = 0;
-    picked.forEach(function (cb) { bytes += parseInt(cb.closest('tr').dataset.sizeBytes, 10) || 0; });
-    document.getElementById('sticky-summary').textContent =
-      picked.length + (picked.length === 1 ? ' file' : ' files') + ' selected · ' + formatGB(bytes);
+    rows.forEach(function (tr) { bytes += parseInt(tr.dataset.sizeBytes, 10) || 0; });
+    document.getElementById('sticky-summary').textContent = rows.length + ' selected · ' + formatGB(bytes);
+    var btn = document.getElementById('sticky-delete-btn');
+    if (!btn.classList.contains('busy')) {
+      btn.textContent = id === 'review-table'
+        ? 'Delete ' + rows.length + (rows.length === 1 ? ' file…' : ' files…') : 'Delete selected';
+    }
     bar.hidden = false;
   }
   document.addEventListener('change', refreshSticky);
   document.addEventListener('htmx:afterSwap', refreshSticky);
+  document.getElementById('sticky-clear').addEventListener('click', function () {
+    var id = activeTableId();
+    if (!id) { return; }
+    // Select-all lives in the table's own header, so this clears it too.
+    document.querySelectorAll('#' + id + ' input[type="checkbox"]').forEach(function (cb) {
+      cb.checked = false;
+      cb.indeterminate = false;
+    });
+    document.querySelectorAll('#' + id + ' tr.selected').forEach(function (tr) { tr.classList.remove('selected'); });
+    refreshSticky();
+    refreshBulkButton();
+    refreshReviewButton();
+  });
   document.getElementById('sticky-delete-btn').addEventListener('click', function () {
-    var real = document.getElementById(activeTableId() === 'review-table' ? 'review-delete-btn' : 'bulk-delete-btn');
+    if (activeTableId() === 'review-table') {
+      var reviewBtn = document.getElementById('review-delete-btn');
+      openDeleteDialog(pickedRows('review-table'), {
+        onConfirm: function () { reviewBtn.disabled = false; reviewBtn.form.requestSubmit(reviewBtn); }
+      });
+      return;
+    }
+    var real = document.getElementById('bulk-delete-btn');
     if (real && !real.disabled) { real.click(); }
   });
 
-  // Needs Review is the ambiguous category, so the confirm says so and
-  // names exactly how much is about to go.
-  document.addEventListener('click', function (e) {
-    if (e.target.id !== 'review-delete-btn') { return; }
-    var picked = document.querySelectorAll('#review-table .orphan-cb:checked');
+  // Needs Review's confirm lists exactly what is about to go. File names
+  // are untrusted, so the list is built with textContent only.
+  var pendingConfirm = null;
+  // Mirrors orphans.SIDECAR_EXTS.
+  function sidecarKind(name) {
+    var ext = name.slice(name.lastIndexOf('.')).toLowerCase();
+    if (ext === '.nfo') { return 'metadata'; }
+    if (['.jpg', '.jpeg', '.png', '.tbn'].indexOf(ext) >= 0) { return 'artwork'; }
+    return 'subtitle';
+  }
+  function openDeleteDialog(rows, opts) {
+    var dialog = document.getElementById('delete-dialog');
     var bytes = 0, sidecars = 0;
-    picked.forEach(function (cb) {
-      bytes += parseInt(cb.closest('tbody.orphan-unit').dataset.sizeBytes, 10) || 0;
-      sidecars += parseInt(cb.closest('tr').dataset.sidecars, 10) || 0;
+    var list = document.getElementById('dd-list');
+    list.textContent = '';
+    rows.forEach(function (tr) {
+      var size = parseInt(tr.dataset.sizeBytes, 10) || 0;
+      bytes += size;
+      sidecars += parseInt(tr.dataset.sidecars, 10) || 0;
+      var li = document.createElement('li');
+      li.textContent = tr.dataset.path.split('/').pop() + ' ';
+      var s = document.createElement('span');
+      s.className = 's';
+      s.textContent = '· ' + formatGB(size);
+      li.appendChild(s);
+      list.appendChild(li);
+      // Each sidecar by name, indented under its video, so nothing goes
+      // unlisted. Its kind goes in a chip: a word that shares the line as
+      // plain text could be mistaken for part of the file name.
+      JSON.parse(tr.dataset.sidecarNames || '[]').forEach(function (name) {
+        var sub = document.createElement('li');
+        sub.className = 'sc';
+        sub.textContent = name;
+        var chip = document.createElement('span');
+        chip.className = 'chip';
+        chip.textContent = sidecarKind(name);
+        sub.appendChild(chip);
+        list.appendChild(sub);
+      });
     });
-    var msg = 'Delete ' + picked.length + (picked.length === 1 ? ' file' : ' files') + ' (' + formatGB(bytes) + ')' +
-      (sidecars ? ', plus ' + sidecars + ' subtitle/metadata ' + (sidecars === 1 ? 'file' : 'files') + ' named after them' : '') +
-      "?\n\nNone of them are in your library (Sonarr, Radarr or Plex). Each one is re-checked first, and anything that has since shown up in the library is skipped.";
-    if (!confirm(msg)) { e.preventDefault(); return; }
+    document.getElementById('dd-title').textContent =
+      'Delete ' + rows.length + (rows.length === 1 ? ' file' : ' files') +
+      (sidecars ? ' and ' + sidecars + (sidecars === 1 ? ' sidecar' : ' sidecars') : '') + ' (' + formatGB(bytes) + ')?';
+    var keep = dialog.querySelector('.dd-keep');
+    keep.hidden = !opts.keep;
+    keep.textContent = 'The suggestion is to keep this file: ' + (rows[0] ? rows[0].dataset.action : '');
+    document.getElementById('dd-ok').textContent = opts.keep ? 'Delete anyway' : 'Delete';
+    pendingConfirm = opts.onConfirm;
+    dialog.showModal();
+  }
+  document.getElementById('dd-cancel').addEventListener('click', function () {
+    pendingConfirm = null;
+    document.getElementById('delete-dialog').close();
+  });
+  document.getElementById('dd-ok').addEventListener('click', function () {
+    var run = pendingConfirm;
+    pendingConfirm = null;
+    document.getElementById('delete-dialog').close();
+    if (run) { run(); }
+  });
+
+  // A row on its way out says so: a dimmed row alone looked stalled.
+  function markDeleting(tr) {
+    tr.classList.add('deleting');
+    var cell = tr.cells[1];
+    if (!cell || cell.querySelector('.row-status')) { return; }
+    var status = document.createElement('div');
+    status.className = 'row-status';
+    var spin = document.createElement('span');
+    spin.className = 'spin';
+    status.appendChild(spin);
+    // Say which files, with no "it" and no time estimate: the spinner says it's running.
+    var n = parseInt(tr.dataset.sidecars, 10) || 0;
+    status.appendChild(document.createTextNode(
+      "Checking that qBittorrent, Sonarr, Radarr and Plex still don't use this file, then deleting the file" +
+      (n ? ' and its ' + n + (n === 1 ? ' sidecar' : ' sidecars') : '') + '.'));
+    cell.appendChild(status);
+  }
+
+  // A keep row's "Delete anyway…" goes through the same dialog, then
+  // sends that row's single-file delete.
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest('.delete-anyway');
+    if (!btn) { return; }
+    btn.closest('.more').classList.remove('open');
+    var tr = btn.closest('tr');
+    if (tr.classList.contains('deleting')) { return; }
+    var inode = btn.dataset.inode;
+    openDeleteDialog([tr], {
+      keep: true,
+      onConfirm: function () {
+        markDeleting(tr);
+        htmx.ajax('DELETE', '/orphans/' + inode, { target: '#orphan-row-' + inode, swap: 'outerHTML' });
+      }
+    });
   });
 
   // Both bulk forms do a full page post that takes ~15s or more (re-scan,
@@ -584,23 +796,33 @@
   document.addEventListener('submit', function (e) {
     var btn = e.submitter;
     if (!btn || (btn.id !== 'bulk-delete-btn' && btn.id !== 'review-delete-btn')) { return; }
-    btn.textContent = 'Re-checking and deleting...';
+    btn.textContent = 'Deleting…';
     btn.classList.add('busy');
     var sticky = document.getElementById('sticky-delete-btn');
-    sticky.textContent = 'Re-checking and deleting...';
+    sticky.textContent = 'Deleting…';
     sticky.classList.add('busy');
-    // Disable after the submit has been dispatched, so it can't be sent twice.
-    setTimeout(function () { btn.disabled = true; }, 0);
+    if (btn.id === 'review-delete-btn') { pickedRows('review-table').forEach(markDeleting); }
+    // Disable after the submit has been dispatched, so it can't be sent twice
+    // (and so the ticked boxes still make it into the request).
+    setTimeout(function () { btn.disabled = true; lockSelection(); }, 0);
   });
+
+  // Once a delete is sent there's no stopping it, so nothing on screen may
+  // look like a stop: Clear goes, and the ticks can't change.
+  function lockSelection() {
+    document.getElementById('sticky-clear').hidden = true;
+    document.getElementById('sticky-delete-btn').disabled = true;
+    document.querySelectorAll('.orphan-cb, #select-all-review, #select-all-download').forEach(function (cb) { cb.disabled = true; });
+  }
 
   document.addEventListener('htmx:beforeRequest', function (e) {
     var btn = e.detail.elt;
     if (!btn.matches || !btn.matches('button[hx-delete], button.group-delete')) { return; }
     var unit = btn.closest('tbody.orphan-group') || btn.closest('tr');
     if (unit) { unit.classList.add('deleting'); }
-    btn.textContent = 'Re-checking...';
+    btn.textContent = 'Deleting…';
     btn.classList.add('busy');
-    btn.title = 'Re-scanning to confirm it is still an orphan before deleting (about 15 seconds)';
+    btn.title = "Checking that qBittorrent, Sonarr, Radarr and Plex still don't use these files, then deleting them";
   });
 
   // Confirmations fade out after a few seconds; errors stay put.
@@ -611,13 +833,22 @@
     });
   });
 
-  document.addEventListener('htmx:afterSwap', function () {
+  // A fresh scan re-picks the group; a single delete stays on the group
+  // you're in, so clearing its last file shows "Nothing left in this group."
+  document.addEventListener('htmx:afterSwap', function (e) {
     applySort('download-table');
     applySort('review-table');
+    if (e.detail.target && e.detail.target.id === 'scan-results') {
+      pickBucket();
+    } else if (currentBucket) {
+      recountBuckets();
+      showBucket(currentBucket);
+    }
   });
 
   applySort('download-table');
   applySort('review-table');
+  pickBucket();
 
   // Tabs: remember the last one, and re-apply it after a scan swaps the
   // results in (the tab row lives inside #scan-results so its counts update).

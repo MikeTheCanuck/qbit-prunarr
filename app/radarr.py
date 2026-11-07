@@ -28,6 +28,21 @@ class RadarrClient:
                 paths.add(movie_file["path"])
         return paths
 
+    def get_movies(self) -> list[dict]:
+        """Every movie as {"path", "title", "year", "has_file"}; path is the
+        movie's folder as Radarr sees it, whether or not it has a file yet."""
+        resp = self._session.get(f"{self._base_url}/api/v3/movie")
+        resp.raise_for_status()
+        return [
+            {
+                "path": m.get("path", ""),
+                "title": m.get("title", ""),
+                "year": m.get("year"),
+                "has_file": bool(m.get("movieFile")),
+            }
+            for m in resp.json()
+        ]
+
     def get_all_queue_paths(self) -> set[str]:
         """Return the output path of every item currently in Radarr's queue.
 

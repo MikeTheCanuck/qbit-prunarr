@@ -32,6 +32,31 @@ class SonarrClient:
                 paths.add(f["path"])
         return paths
 
+    def get_series(self) -> list[dict]:
+        """Every series as {"id", "title", "path"}; path is the series folder as Sonarr sees it."""
+        resp = self._session.get(f"{self._base_url}/api/v3/series")
+        resp.raise_for_status()
+        return [{"id": s["id"], "title": s["title"], "path": s["path"]} for s in resp.json()]
+
+    def get_missing_specials(self, series_id: int) -> list[dict]:
+        """Season-0 episodes Sonarr knows about but has no file for.
+
+        Each is {"code": "S00E09", "title", "monitored"}. These come from
+        Sonarr's own episode list, so a file matched to one has a real slot
+        to be imported into.
+        """
+        resp = self._session.get(f"{self._base_url}/api/v3/episode", params={"seriesId": series_id})
+        resp.raise_for_status()
+        return [
+            {
+                "code": f"S00E{e['episodeNumber']:02d}",
+                "title": e.get("title", ""),
+                "monitored": bool(e.get("monitored")),
+            }
+            for e in resp.json()
+            if e.get("seasonNumber") == 0 and not e.get("hasFile")
+        ]
+
     def get_all_queue_paths(self) -> set[str]:
         """Return the output path of every item currently in Sonarr's queue.
 

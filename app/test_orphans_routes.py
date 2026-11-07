@@ -137,7 +137,7 @@ def test_download_and_review_candidates_render_in_separate_tables(tmp_path):
     assert 'id="select-all-review"' in response.text
 
     assert "Needs Review" in response.text
-    assert "safe duplicate" in response.text and "never got imported" in response.text
+    assert "sorted by what to do about them" in response.text
 
 
 def test_scan_returns_200_with_inline_error_on_unexpected_failure(tmp_path):
@@ -946,16 +946,94 @@ def test_tabs_show_no_counts_before_a_scan():
     assert "Not scanned yet" in response.text
 
 
-def test_needs_review_offers_folder_grouping():
+def test_scan_status_is_one_message_beside_the_button():
+    """'Not scanned yet' and 'Scanning…' share one element next to Scan Now,
+    so the page never shows a stale 'Not scanned yet' under the tabs while
+    a scan runs."""
+    html = TestClient(app).get("/orphans").text
+    status = html[html.index('id="scan-status"'):html.index('id="scan-results"')]
+    assert "Not scanned yet" in status
+    assert "Scanning" in status
+    assert html.count("Not scanned yet") == 1
+    assert 'hx-indicator="#scan-status"' in html
+    assert 'hx-select-oob="#scan-status"' in html
+
+
+def test_review_columns_have_fixed_widths():
+    """Size and the last column keep explicit widths, so they don't drift
+    when a table has only a few short rows."""
+    html = TestClient(app).get("/orphans").text
+    assert "th.col-size" in html and "th.col-delete" in html and "th.col-more" in html
+    download = _table_region(html, "download-table")
+    assert '<th class="col-delete">Delete</th>' in download
+    review = _table_region(html, "review-table")
+    assert '<th class="sortable col-size" data-sort="size">Size</th>' in review
+    assert '<th class="col-more"></th>' in review
+
+
+def test_scan_status_hides_not_scanned_after_a_scan():
+    with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
+         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set(), get_all_queue_paths=set())), \
+         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set(), get_all_queue_paths=set())), \
+         patch("main.PlexClient", return_value=_mock_client(
+             get_all_movie_paths=set(), get_all_episode_paths=set()
+         )):
+        html = TestClient(app).post("/orphans/scan").text
+    assert 'id="scan-status" class="scanned"' in html
+
+
+def test_extras_tab_exists_without_counts_before_a_scan():
     response = TestClient(app).get("/orphans")
-    assert 'data-mode="folder"' in response.text and 'data-mode="flat"' in response.text
+    assert 'data-tab="extras"' in response.text
+    assert 'data-panel="extras"' in response.text
+    assert 'class="tab-count"' not in response.text
+
+
+
+def test_plex_confirmed_extra_moves_to_extras_tab(tmp_path):
+    response = _scan_with(tmp_path, _plex_with_extras({f"{FILM}/Featurettes/Making Of.mkv"}))
+    review = _table_region(response.text, "review-table")
+    extras = _table_region(response.text, "extras-table")
+    assert "Making Of.mkv" not in review
+    assert "Making Of.mkv" in extras
+    assert "Trailer.mkv" in review
+
+
+def test_review_rows_carry_their_verdict(tmp_path):
+    response = _scan_with(tmp_path, _plex_with_extras())
+    review = _table_region(response.text, "review-table")
+    assert 'data-verdict="junk"' in review          # film-sample.mkv
+    assert 'data-verdict="plex"' in review          # Extras/Trailer.mkv
+    assert "Move to Film (2020)/Trailers/Trailer.mkv" in review
+
+
+def test_sonarr_series_folder_with_prefix_and_trailing_slash_still_maps(tmp_path, monkeypatch):
+    import os
+    monkeypatch.setenv("SONARR_PATH_PREFIX", "/data")
+    root = str(tmp_path)
+    _make_file(os.path.join(root, "media", "tv", "Show", "Season 01", "ep1.mkv"))
+    _make_file(os.path.join(root, "media", "tv", "Show", "Show.S01E00.The.Pilot.Story.mkv"))
+    sonarr = _mock_client(
+        get_all_episode_paths={"/data/media/tv/Show/Season 01/ep1.mkv"}, get_all_queue_paths=set(),
+        get_series=[{"id": 3, "title": "Show", "path": "/data/media/tv/Show/"}],
+        get_missing_specials=[{"code": "S00E01", "title": "The Pilot Story", "monitored": True}],
+    )
+    plex = _mock_client(get_all_movie_paths=set(), get_all_episode_paths={"media/tv/Show/Season 01/ep1.mkv"},
+                        get_movie_files={}, get_episode_files={"media/tv/Show/Season 01/ep1.mkv": ["1", "2"]},
+                        get_extra_paths=set())
+    with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
+         patch("main.SonarrClient", return_value=sonarr), \
+         patch("main.RadarrClient", return_value=_mock_client(get_all_movie_paths=set(), get_all_queue_paths=set(), get_movies=[])), \
+         patch("main.PlexClient", return_value=plex):
+        response = TestClient(app).post("/orphans/scan")
+    # Jinja autoescapes the title's quotes in the rendered row.
+    assert 'Import as S00E01 &#34;The Pilot Story&#34;' in _table_region(response.text, "review-table")
 
 
 def test_review_form_has_its_own_bulk_delete_button(tmp_path):
     """Needs Review gets a submit inside its own form, so its checkboxes do
     something - and still can't post anything from the download table."""
-    with _services():
-        response = TestClient(app).post("/orphans/scan")
+    response = _scan_with(tmp_path, _plex_with_extras())
 
     start = response.text.index('id="review-form"')
     form = response.text[start:response.text.index("</form>", start)]
@@ -989,10 +1067,9 @@ def test_bulk_delete_success_says_what_it_did(tmp_path):
     assert 'class="done-banner"' in page.text
 
 
-def test_page_has_sticky_delete_bar_and_folder_controls():
+def test_page_has_sticky_delete_bar():
     html = TestClient(app).get("/orphans").text
     assert 'id="sticky-delete"' in html and 'id="sticky-delete-btn"' in html
-    assert 'data-folders="expand"' in html and 'data-folders="collapse"' in html
 
 
 def test_bulk_delete_records_exactly_what_it_removed(tmp_path, monkeypatch):
@@ -1049,3 +1126,348 @@ def test_deleting_a_review_video_takes_its_sidecars_but_nothing_else(tmp_path, m
     assert "plus 1 subtitle/metadata file" in page.text
     assert "media/movies/Film/Old.srt" in page.text
     assert "DELETED media/movies/Film/Old.srt (30 bytes)" in audit.read_text()
+
+
+FILM = "media/movies/Film (2020)"
+
+
+def _plex_with_extras(extra_paths=(), raises=False):
+    plex = _mock_client(
+        get_all_movie_paths={f"{FILM}/Film.mkv"}, get_all_episode_paths=set(),
+        get_movie_files={f"{FILM}/Film.mkv": ["7"]}, get_episode_files={},
+        get_extra_paths=set(extra_paths),
+    )
+    if raises:
+        plex.get_extra_paths.side_effect = RuntimeError("plex 500 on one key")
+    return plex
+
+
+def _scan_with(tmp_path, plex, sonarr=None, radarr=None):
+    import os
+    root = str(tmp_path)
+    _make_file(os.path.join(root, *FILM.split("/"), "Film.mkv"))
+    _make_file(os.path.join(root, *FILM.split("/"), "Featurettes", "Making Of.mkv"))
+    _make_file(os.path.join(root, *FILM.split("/"), "Extras", "Trailer.mkv"))
+    _make_file(os.path.join(root, *FILM.split("/"), "film-sample.mkv"))
+    with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
+         patch("main.SonarrClient", return_value=sonarr or _mock_client(get_all_episode_paths=set(), get_all_queue_paths=set())), \
+         patch("main.RadarrClient", return_value=radarr or _mock_client(
+             get_all_movie_paths={f"{FILM}/Film.mkv"}, get_all_queue_paths=set(), get_movies=[])), \
+         patch("main.PlexClient", return_value=plex):
+        return TestClient(app).post("/orphans/scan")
+
+
+def test_confirmed_extra_is_never_in_the_scan_cache(tmp_path):
+    import os
+    _scan_with(tmp_path, _plex_with_extras({f"{FILM}/Featurettes/Making Of.mkv"}))
+    inode = os.stat(os.path.join(str(tmp_path), *FILM.split("/"), "Featurettes", "Making Of.mkv")).st_ino
+    assert inode not in main._scan_cache
+    assert any("Making Of.mkv" in c.paths[0] for c in main._extras_cache)
+
+
+def test_bulk_delete_of_an_extra_skips_it(tmp_path):
+    import os
+    path = os.path.join(str(tmp_path), *FILM.split("/"), "Featurettes", "Making Of.mkv")
+    plex = _plex_with_extras({f"{FILM}/Featurettes/Making Of.mkv"})
+    _scan_with(tmp_path, plex)
+    with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
+         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set(), get_all_queue_paths=set())), \
+         patch("main.RadarrClient", return_value=_mock_client(
+             get_all_movie_paths={f"{FILM}/Film.mkv"}, get_all_queue_paths=set(), get_movies=[])), \
+         patch("main.PlexClient", return_value=plex):
+        TestClient(app).post("/orphans/delete", data={"inodes": [str(os.stat(path).st_ino)]}, follow_redirects=False)
+    assert os.path.exists(path)
+
+
+def test_failed_extras_lookup_keeps_everything_in_review(tmp_path):
+    response = _scan_with(tmp_path, _plex_with_extras(raises=True))
+    review = _table_region(response.text, "review-table")
+    assert "Making Of.mkv" in review
+    assert "Plex extras: not checked" in _swapped_region(response.text)
+    # Said where it's seen, not only inside the collapsed Service status box.
+    assert 'id="extras-unchecked"' in _swapped_region(response.text)
+    assert "No Plex extras among" not in response.text
+    assert "Plex extras couldn't be checked this scan, so any extras" in response.text
+
+
+def _row_for(review: str, name: str) -> str:
+    at = review.index(name)
+    return review[review.rindex("<tr", 0, at): review.index("</tr>", at)]
+
+
+def test_unreachable_plex_keeps_extras_in_review_and_says_not_checked(tmp_path):
+    """Plex's movie fetch fails: movie files can't be reviewed at all (fail
+    closed), and the extras lookup is skipped, so a TV Featurettes file that
+    Plex may well show as an extra stays in Needs Review as a keep."""
+    import os
+    root = str(tmp_path)
+    ep = "media/tv/Show/Season 01/Show.S01E01.mkv"
+    _make_file(os.path.join(root, *ep.split("/")))
+    _make_file(os.path.join(root, "media", "tv", "Show", "Featurettes", "Making Of.mkv"))
+    plex = _mock_client(get_all_episode_paths={ep}, get_movie_files={}, get_episode_files={ep: ["1"]},
+                        get_extra_paths={"media/tv/Show/Featurettes/Making Of.mkv"})
+    plex.get_all_movie_paths.side_effect = RuntimeError("plex down")
+    with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
+         patch("main.SonarrClient", return_value=_mock_client(
+             get_all_episode_paths={ep}, get_all_queue_paths=set(), get_series=[])), \
+         patch("main.RadarrClient", return_value=_mock_client(
+             get_all_movie_paths=set(), get_all_queue_paths=set(), get_movies=[])), \
+         patch("main.PlexClient", return_value=plex):
+        response = TestClient(app).post("/orphans/scan")
+    plex.get_extra_paths.assert_not_called()
+    swapped = _swapped_region(response.text)
+    review = _table_region(response.text, "review-table")
+    row = _row_for(review, "Featurettes/Making Of.mkv")
+    assert "verdict-plex" in row and "Leave it where it is." in row
+    assert 'name="inodes"' not in row
+    assert "Plex: unreachable" in swapped
+    assert "Plex extras:" not in swapped
+    assert 'id="extras-unchecked"' in swapped
+    assert "Plex extras couldn't be checked this scan, so any extras" in swapped
+    assert "No Plex extras among" not in swapped
+    assert not main._extras_cache
+
+
+def test_checked_extras_with_none_found_say_so(tmp_path):
+    response = _scan_with(tmp_path, _plex_with_extras())
+    swapped = _swapped_region(response.text)
+    assert "No Plex extras among the files this scan found." in swapped
+    assert 'id="extras-unchecked"' not in swapped
+
+
+def test_extras_not_checked_before_a_scan_shows_no_notice():
+    response = TestClient(app).get("/orphans")
+    assert 'id="extras-unchecked"' not in response.text
+    assert "couldn't be checked" not in response.text
+
+
+def test_extra_confirmed_under_a_second_hardlink_path_still_moves(tmp_path):
+    """The extras lookup keys on every path's title folder, not just the
+    first: here the first path's folder has no Plex title at all."""
+    import os
+    root = str(tmp_path)
+    film = "media/movies-no-backup/Film (2020)"
+    first = os.path.join(root, "media", "movies", "Other (2019)", "copy.mkv")
+    second = os.path.join(root, *film.split("/"), "Featurettes", "Making Of.mkv")
+    _make_file(os.path.join(root, *film.split("/"), "Film.mkv"))
+    _make_file(first)
+    os.makedirs(os.path.dirname(second), exist_ok=True)
+    os.link(first, second)
+    plex = _mock_client(
+        get_all_movie_paths={f"{film}/Film.mkv"}, get_all_episode_paths=set(),
+        get_movie_files={f"{film}/Film.mkv": ["7"]}, get_episode_files={},
+        get_extra_paths={f"{film}/Featurettes/Making Of.mkv"},
+    )
+    with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
+         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set(), get_all_queue_paths=set())), \
+         patch("main.RadarrClient", return_value=_mock_client(
+             get_all_movie_paths={f"{film}/Film.mkv"}, get_all_queue_paths=set(), get_movies=[])), \
+         patch("main.PlexClient", return_value=plex):
+        TestClient(app).post("/orphans/scan")
+    inode = os.stat(first).st_ino
+    assert main._extras_cache and main._extras_cache[0].paths[0] == "media/movies/Other (2019)/copy.mkv"
+    assert inode not in main._scan_cache
+
+
+def test_bulk_delete_skips_an_inode_this_page_never_showed(tmp_path):
+    """A hand-crafted bulk POST can't delete a file the scan didn't show,
+    even when the re-verify scan would flag it."""
+    import os
+    _scan_with(tmp_path, _plex_with_extras())
+    late = os.path.join(str(tmp_path), *FILM.split("/"), "Late Arrival.mkv")
+    _make_file(late)
+    inode = os.stat(late).st_ino
+    assert inode not in main._scan_cache
+    with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
+         patch("main.SonarrClient", return_value=_mock_client(get_all_episode_paths=set(), get_all_queue_paths=set())), \
+         patch("main.RadarrClient", return_value=_mock_client(
+             get_all_movie_paths={f"{FILM}/Film.mkv"}, get_all_queue_paths=set(), get_movies=[])), \
+         patch("main.PlexClient", return_value=_plex_with_extras()):
+        response = TestClient(app).post("/orphans/delete", data={"inodes": [str(inode)]}, follow_redirects=False)
+    assert os.path.exists(late)
+    assert inode in main._scan_cache  # the re-scan did flag it
+    assert "1 skipped" in response.headers["location"].replace("%20", " ")
+
+
+def test_review_buckets_count_every_kind_including_empty():
+    rows = [{"verdict": "junk", "size_bytes": 2_000_000_000}, {"verdict": None, "size_bytes": 5}]
+    b = {x["kind"]: x for x in main._review_buckets(rows)}
+    assert [x["kind"] for x in main.REVIEW_BUCKETS] == ["junk", "wanted", "plex", "identify", "call"]
+    assert b["junk"]["count"] == 1 and b["junk"]["size_gb"] == "2.0"
+    assert b["call"]["count"] == 1          # no verdict counts as Your call
+    assert b["wanted"]["count"] == 0 and b["wanted"]["keep"] is True
+    assert b["junk"]["keep"] is False
+
+
+def test_needs_review_shows_group_cards_after_a_scan(tmp_path):
+    response = _scan_with(tmp_path, _plex_with_extras())
+    swapped = _swapped_region(response.text)
+    cards = swapped[swapped.index('id="review-buckets"'):swapped.index('id="review-form"')]
+    assert 'data-kind="junk"' in cards and "Probably junk" in cards and ">Delete<" in cards
+    assert "Sonarr/Radarr wants it" in cards and "Keep: " not in cards
+    assert "Nothing to delete here. Each file lists its next step." in swapped
+    assert "Tick the ones to delete." in swapped
+
+
+def test_needs_review_with_nothing_says_so(tmp_path):
+    with _services():
+        html = TestClient(app).post("/orphans/scan").text
+    assert "Nothing needs review." in html
+    assert 'id="review-buckets"' not in html
+
+
+def test_needs_review_drops_flat_mode_and_expand_collapse():
+    html = TestClient(app).get("/orphans").text
+    assert 'data-mode="flat"' not in html and 'data-folders="expand"' not in html
+    assert "folder-all" not in html and "orphans-review-mode" not in html
+    assert "showBucket" in html and "orphans-review-bucket" in html
+
+
+@pytest.mark.parametrize("path,expected", [
+    ("media/tv/Lucky Hank/Lucky.Hank.S01E07.1080p.WEB.h264-ETHEL.mkv",
+     ("Lucky Hank S01E07 1080p WEB h264-ETHEL", "tv / Lucky Hank")),
+    ("media/movies/Iron Man 3 2013/Sample,Screens/Iron Man 3 (Sample).mkv",
+     ("Iron Man 3 (Sample)", "movies / Iron Man 3 2013 / Sample,Screens")),
+    ("media/tv/American_Dad_S07E08.mkv", ("American Dad S07E08", "tv")),
+    ("media/x.mkv", ("x", "")),
+])
+def test_review_title_splits_name_and_folder(path, expected):
+    assert main._review_title(path) == expected
+
+
+def _review_row(review: str, name: str) -> str:
+    """The one review <tr> whose content names the file. _row_for can land
+    on the previous row, because each row's tbody repeats its path."""
+    rows = [r.split("</tr>")[0] for r in review.split('<tr id="orphan-row-')[1:]]
+    return next(r for r in rows if name in r)
+
+
+def test_keep_rows_have_no_checkbox_and_delete_hides_in_a_menu(tmp_path):
+    response = _scan_with(tmp_path, _plex_with_extras())
+    review = _table_region(response.text, "review-table")
+    row = _review_row(review, "Extras/Trailer.mkv")
+    assert 'name="inodes"' not in row
+    assert 'class="keep-mark"' in row
+    assert 'class="delete-anyway"' in row and "Delete anyway" in row
+    assert "<button hx-delete" not in row   # the old red per-row Delete button is gone
+
+
+def test_deletable_rows_keep_a_checkbox_and_no_delete_button(tmp_path):
+    response = _scan_with(tmp_path, _plex_with_extras())
+    row = _review_row(_table_region(response.text, "review-table"), "film-sample.mkv")
+    assert 'name="inodes"' in row and "delete-anyway" not in row
+    assert ">film-sample<" in row or "film-sample</" in row   # readable name, extension dropped
+    assert 'class="copy-path"' in row
+
+
+def test_review_table_has_no_delete_column():
+    html = TestClient(app).get("/orphans").text
+    review = html[html.index('id="review-table"'):html.index("</thead>", html.index('id="review-table"'))]
+    assert "col-delete" not in review and ">Delete<" not in review
+    assert ">File<" in review
+
+
+def test_copy_path_works_over_plain_http():
+    html = TestClient(app).get("/orphans").text
+    assert "execCommand('copy')" in html
+
+
+def test_review_deletes_confirm_in_a_styled_dialog():
+    html = TestClient(app).get("/orphans").text
+    dialog = html[html.index('<dialog id="delete-dialog"'):html.index("</dialog>")]
+    assert "Deleted files can't be recovered. Each one is re-checked first, and anything that has since shown up in Sonarr, Radarr or Plex is skipped." in dialog
+    assert ">Cancel<" in dialog and "autofocus" in dialog
+    assert "showModal()" in html
+    assert "The suggestion is to keep this file: " in html
+
+
+def test_sticky_bar_has_clear_and_is_the_review_tabs_only_delete(tmp_path):
+    response = _scan_with(tmp_path, _plex_with_extras())
+    html = response.text
+    bar = html[html.index('id="sticky-delete"'):html.index("</div>", html.index('id="sticky-delete"'))]
+    assert 'id="sticky-clear"' in bar and ">Clear<" in bar
+    form = html[html.index('id="review-form"'):html.index("</form>", html.index('id="review-form"'))]
+    assert 'id="review-delete-btn"' in form and 'type="submit"' in form
+    assert '<button type="submit" id="review-delete-btn" hidden' in form
+
+
+def test_delete_anyway_goes_through_the_dialog_not_hx_confirm(tmp_path):
+    response = _scan_with(tmp_path, _plex_with_extras())
+    row = _review_row(_table_region(response.text, "review-table"), "Extras/Trailer.mkv")
+    assert 'class="delete-anyway"' in row and "hx-confirm" not in row and "hx-delete" not in row
+
+
+def test_clicks_inside_a_row_menu_keep_it_open():
+    """The close-on-outside-click handler ran first and hid the menu, so
+    Copy path's "Copied" was written to a button nobody could see."""
+    html = TestClient(app).get("/orphans").text
+    assert "if (e.target.closest('.menu')) { return; }" in html
+
+
+def test_delete_anyway_ignores_a_row_already_deleting():
+    """A second confirm while the ~15s re-check runs would send a second
+    DELETE whose "skipped" row overwrites the first one's "Deleted" row."""
+    html = TestClient(app).get("/orphans").text
+    assert "if (tr.classList.contains('deleting')) { return; }" in html
+
+
+def test_review_confirm_no_longer_uses_native_confirm():
+    html = TestClient(app).get("/orphans").text
+    assert "None of them are in your library" not in html     # the old confirm() text
+    assert "confirm('Delete every selected file and folder?')" in html   # download tab unchanged
+
+
+def test_review_rows_carry_their_sidecar_names(tmp_path):
+    """The confirm lists each sidecar by name under its video, so the
+    row has to hand the dialog the names, not just a count."""
+    import os
+    _make_file(os.path.join(str(tmp_path), *FILM.split("/"), "film-sample.srt"))
+    response = _scan_with(tmp_path, _plex_with_extras())
+    row = _review_row(_swapped_region(response.text), "film-sample")
+    assert 'data-sidecar-names=\'["film-sample.srt"]\'' in row
+
+
+def test_delete_dialog_lists_each_sidecar_under_its_video():
+    html = TestClient(app).get("/orphans").text
+    assert "JSON.parse(tr.dataset.sidecarNames" in html
+    assert "sub.className = 'sc';" in html
+
+
+def test_an_in_flight_delete_says_so_in_the_row():
+    """A dimmed row alone read as stalled; the row now says what's happening."""
+    html = TestClient(app).get("/orphans").text
+    assert "function markDeleting(tr)" in html
+    assert "Checking that qBittorrent, Sonarr, Radarr and Plex still don't use this file, then deleting the file" in html
+    assert "about 15" not in html and "seconds)" not in html
+
+
+def test_busy_label_does_not_promise_a_fresh_scan():
+    """"Re-checking" made people expect fresh scan results on screen."""
+    html = TestClient(app).get("/orphans").text
+    assert "Re-checking" not in html
+    assert "sticky.textContent = 'Deleting…';" in html
+
+
+def test_dialog_names_sidecars_with_a_word_not_a_tree_glyph():
+    """A "+" under the video read like a file-tree expander."""
+    html = TestClient(app).get("/orphans").text
+    assert "sub.textContent = name;" in html and "'with ' + name" not in html
+    assert "function sidecarKind(name)" in html
+    assert "chip.className = 'chip';" in html
+    assert 'li.sc::before { content: "+ "; }' not in html
+    assert "Indented: subtitle and metadata files" not in html
+
+
+def test_a_running_bulk_delete_locks_the_selection():
+    """Clear (or a new tick) mid-delete looked like a cancel, but the
+    request was already sent and the server finishes it regardless."""
+    html = TestClient(app).get("/orphans").text
+    assert "function lockSelection()" in html
+    assert "document.getElementById('sticky-clear').hidden = true;" in html
+
+
+def test_delete_dialog_lists_the_videos_real_file_name():
+    """The tidied title next to real sidecar file names read as two
+    different kinds of thing; every line is now a real file name."""
+    html = TestClient(app).get("/orphans").text
+    assert "li.textContent = tr.dataset.path.split('/').pop() + ' ';" in html
