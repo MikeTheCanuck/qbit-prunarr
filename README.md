@@ -1,11 +1,33 @@
 # qbit-prunarr
 
-A small web app for reclaiming disk space on a homelab media server. It does two jobs the \*arr stack doesn't:
+Finds the files in your media library that Sonarr, Radarr and Plex have lost track of, and tells you what to do with each one: delete it, import it, move it where Plex can see it, or look at it first.
 
-1. **Cold torrents.** Lists qBittorrent torrents with a given tag (`only-for-ratio` by default) that haven't seen activity in N days, bucketed by age, and deletes them with their files.
-2. **Orphan trawler.** Finds files that nothing references anymore: downloads no torrent or \*arr queue claims, and media files that Sonarr/Radarr and Plex don't know about. You review them and delete what's actually dead.
+![Needs Review: files grouped by what to do with them](docs/screenshots/needs-review-wanted.png)
 
-It never deletes anything on its own. Every delete is something you ticked, confirmed, and that passed a fresh re-check first.
+Scanning never changes anything. Nothing is deleted unless you ticked it, read the list of exactly what's going, and it passed a fresh re-check first.
+
+## Try it in 30 seconds
+
+No NAS, no API keys. The demo builds a made-up library (public-domain films, invented TV shows, sparse files that take no disk space) and fake qBittorrent, Sonarr, Radarr and Plex APIs, then runs the real app against them:
+
+```
+git clone https://github.com/MikeTheCanuck/qbit-prunarr && cd qbit-prunarr/app
+python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
+.venv/bin/python demo.py
+```
+
+Open `http://localhost:8585/orphans` and press **Scan Now**. Deletes are real but only touch the sandbox, which is rebuilt every time the demo starts.
+
+## What it does
+
+1. **Needs Review** (the main event). Media files that aren't confirmed by *both* Sonarr/Radarr *and* Plex, each with a verdict: probably junk (samples, older copies Radarr replaced), Sonarr/Radarr wants it (a missing special, a movie Radarr has no file for), Plex can't see it (bonus material in the wrong folder), identify it, or your call.
+2. **Unlinked Downloads.** Download-side files no torrent, \*arr queue or library hardlink claims.
+3. **Cold torrents.** qBittorrent torrents with a given tag (`only-for-ratio` by default) that haven't seen activity in N days, bucketed by age.
+
+| | |
+|---|---|
+| ![Delete confirmation listing every file and sidecar](docs/screenshots/delete-confirm.png) | ![Bonus material Plex can't see, with where to move it](docs/screenshots/needs-review-plex.png) |
+| ![Unlinked downloads, grouped by folder](docs/screenshots/unlinked-downloads.png) | ![Cold torrents bucketed by inactivity](docs/screenshots/cold-torrents.png) |
 
 It works with exactly one stack: qBittorrent, Sonarr, Radarr and Plex, in Docker on a Synology NAS, with the \*arrs importing downloads as hardlinks (see [Before you start](#before-you-start)). It calls those four apps' APIs directly. Other download clients (Transmission, Deluge, SABnzbd's own history), other media servers (Jellyfin, Emby) and the other \*arrs (Lidarr, Readarr) aren't supported and haven't been tried. FastAPI, Jinja2 and HTMX. No JS framework, no build step.
 
@@ -187,6 +209,14 @@ It's aimed at people who want their library tidy without studying it, not at peo
 - **Scans are on demand.** Nothing runs on a schedule, and results live in memory until the next scan or a restart.
 - **Only one qBittorrent tag** on the cold-torrent page.
 - **Built for one person's NAS.** It'll work on yours if your stack and layout match, but it hasn't been tested anywhere else.
+
+## How it was built
+
+I designed this and tested every change on my own NAS. The code was written with Claude Code, and the commits say so. The design notes and plans from that process are in `docs/superpowers/`.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
 
 ## Contributing
 
