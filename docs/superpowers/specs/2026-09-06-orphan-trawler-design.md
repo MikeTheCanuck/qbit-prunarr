@@ -68,8 +68,8 @@ unchanged.
 ## Scan algorithm
 
 Filenames do **not** match between the two sides — confirmed on real data:
-`10 Cloverfield Lane (2016) Bluray-1080p.mp4` in media/ is the same inode as
-`10.Cloverfield.Lane.2016.1080p.BluRay.x264-[YTS.AG].mp4` in
+`10 Juniper Lane (2016) Bluray-1080p.mp4` in media/ is the same inode as
+`10.Juniper.Lane.2016.1080p.BluRay.x264-[GRP].mp4` in
 `torrents/completed/radarr/`. Any path- or filename-matching approach is
 unreliable. Matching must be by **inode**, since both trees live on the same
 filesystem (`/volume1`, confirmed via `df`).

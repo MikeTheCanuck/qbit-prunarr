@@ -1324,11 +1324,11 @@ def test_needs_review_drops_flat_mode_and_expand_collapse():
 
 
 @pytest.mark.parametrize("path,expected", [
-    ("media/tv/Lucky Hank/Lucky.Hank.S01E07.1080p.WEB.h264-ETHEL.mkv",
-     ("Lucky Hank S01E07 1080p WEB h264-ETHEL", "tv / Lucky Hank")),
-    ("media/movies/Iron Man 3 2013/Sample,Screens/Iron Man 3 (Sample).mkv",
-     ("Iron Man 3 (Sample)", "movies / Iron Man 3 2013 / Sample,Screens")),
-    ("media/tv/American_Dad_S07E08.mkv", ("American Dad S07E08", "tv")),
+    ("media/tv/Lucky Frank/Lucky.Frank.S01E07.1080p.WEB.h264-RLSA.mkv",
+     ("Lucky Frank S01E07 1080p WEB h264-RLSA", "tv / Lucky Frank")),
+    ("media/movies/Tin Robot 3 2013/Sample,Screens/Tin Robot 3 (Sample).mkv",
+     ("Tin Robot 3 (Sample)", "movies / Tin Robot 3 2013 / Sample,Screens")),
+    ("media/tv/Suburban_Dad_S07E08.mkv", ("Suburban Dad S07E08", "tv")),
     ("media/x.mkv", ("x", "")),
 ])
 def test_review_title_splits_name_and_folder(path, expected):

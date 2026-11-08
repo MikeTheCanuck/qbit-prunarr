@@ -33,7 +33,7 @@ It works with exactly one stack: qBittorrent, Sonarr, Radarr and Plex, in Docker
 
 ## Why this exists
 
-qBittorrent's WebUI has no "last activity" column and no bulk prune, so ratio-only torrents pile up quietly. Separately, years of manual imports, re-grabs and half-finished downloads leave stuff behind: a 29 GB 4K download Radarr gave up on in March, a 2018 WEBRip sitting next to the BluRay that replaced it, a 40 GB disc rip nothing points to. None of the apps involved will tell you about it, because each one only knows about what it's tracking.
+qBittorrent's WebUI has no "last activity" column and no bulk prune, so ratio-only torrents pile up quietly. Separately, years of manual imports, re-grabs and half-finished downloads leave stuff behind: a big download Radarr gave up on months ago, an old copy sitting next to the upgrade that replaced it, a folder nothing points to anymore. None of the apps involved will tell you about it, because each one only knows about what it's tracking.
 
 ## The orphan trawler
 
@@ -176,7 +176,7 @@ python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
 
 The tests mock qBittorrent, Sonarr, Radarr and Plex and build real files and hardlinks in a temp directory, so the scan and delete paths run against an actual filesystem. They don't run the page's JavaScript; selection, the group cards, the delete bar and the confirm dialog get checked by hand in a browser.
 
-Design notes and implementation plans live in `docs/`.
+Design notes live in `docs/`.
 
 ## Assumptions and trade-offs
 
@@ -212,7 +212,7 @@ It's aimed at people who want their library tidy without studying it, not at peo
 
 ## How it was built
 
-I designed this and tested every change on my own NAS. The code was written with Claude Code, and the commits say so. The design notes and plans from that process are in `docs/superpowers/`.
+I designed this and tested every change on my own NAS. The code was written with Claude Code, and the commits say so. The design specs from that process are in `docs/superpowers/specs/`.
 
 ## License
 

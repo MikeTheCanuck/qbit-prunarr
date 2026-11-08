@@ -118,13 +118,13 @@ def test_get_movies_returns_folder_title_year_and_has_file(client: RadarrClient,
         method="GET",
         url=f"{BASE_URL}/api/v3/movie",
         json=[
-            {"title": "Crystal Lake Memories", "year": 2013, "path": "/data/media/movies/Crystal Lake"},
-            {"title": "Gambit", "year": 1966, "path": "/data/media/movies/Gambit",
-             "movieFile": {"path": "/data/media/movies/Gambit/Gambit.mkv"}},
+            {"title": "Willow Creek Memories", "year": 2013, "path": "/data/media/movies/Willow Creek"},
+            {"title": "Gamble", "year": 1966, "path": "/data/media/movies/Gamble",
+             "movieFile": {"path": "/data/media/movies/Gamble/Gamble.mkv"}},
         ],
     )
 
     assert client.get_movies() == [
-        {"path": "/data/media/movies/Crystal Lake", "title": "Crystal Lake Memories", "year": 2013, "has_file": False},
-        {"path": "/data/media/movies/Gambit", "title": "Gambit", "year": 1966, "has_file": True},
+        {"path": "/data/media/movies/Willow Creek", "title": "Willow Creek Memories", "year": 2013, "has_file": False},
+        {"path": "/data/media/movies/Gamble", "title": "Gamble", "year": 1966, "has_file": True},
     ]
