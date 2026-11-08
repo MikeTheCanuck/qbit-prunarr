@@ -69,7 +69,7 @@ _NXNN_EPISODE = re.compile(r"\b\d{1,2}x\d{2,3}\b", re.I)
 def _words(text: str) -> list[str]:
     """Lowercase words with release noise removed. Parenthesized and
     bracketed text is dropped first: it's almost always quality tags or
-    a release group, e.g. "(1080p BluRay x265 Silence)" or "[rarbg]"."""
+    a release group, e.g. "(1080p BluRay x265 Grp)" or "[group]"."""
     text = re.sub(r"\([^)]*\)|\[[^\]]*\]", " ", text)
     return [w for w in re.split(r"[^a-z0-9]+", text.lower()) if w and not _NOISE.match(w)]
 
@@ -135,7 +135,7 @@ _SPECIALS_DIRS = {"specials", "season 00", "season 0"}
 @dataclass
 class VerdictContext:
     tv_subdirs: set[str]
-    # Title folder ("media/tv/Firefly") -> that series' missing specials.
+    # Title folder ("media/tv/Driftwood") -> that series' missing specials.
     # A folder is present iff Sonarr has a series there. None: not checked.
     specials: dict[str, SeriesSpecials] | None
     # Movie folder -> Radarr's record. None: Radarr not checked.
@@ -213,7 +213,7 @@ def _is_loose(path: str) -> bool:
 def looks_special(path: str) -> bool:
     """S00Exx or SxxE00 in the name, "special" as a word, or sitting
     directly in a Specials/Season 00 folder. Only the immediate parent
-    counts: Firefly keeps a movie's featurettes in a folder nested under
+    counts: Driftwood keeps a movie's featurettes in a folder nested under
     Specials/, and those aren't specials."""
     name = os.path.basename(path)
     parent = os.path.basename(os.path.dirname(path)).lower()
@@ -227,7 +227,7 @@ def looks_special(path: str) -> bool:
 
 def extras_target(path: str, tv_subdirs: set[str]) -> str | None:
     """Where Plex would pick this file up as an extra, shown relative to the
-    library root (e.g. "Firefly/Featurettes/x.mkv"), or None.
+    library root (e.g. "Driftwood/Featurettes/x.mkv"), or None.
 
     Only a suggestion: a name rule never confirms an extra (see CLAUDE.md).
     TV goes to <Show>/Featurettes/, the one TV placement proven on the
@@ -239,7 +239,7 @@ def extras_target(path: str, tv_subdirs: set[str]) -> str | None:
         return None  # already directly inside one Plex extras folder
     folder, dirs, name = _below_title(path)
     odd_dir = any(_is_extras_dir(d) for d in dirs)
-    # The title's own words (Trailer Park Boys, Interview with the Vampire)
+    # The title's own words (Trailer Park Kings, Interview with the Werewolf)
     # aren't evidence of an extra.
     title_words = _title_words(folder)
     bare = " ".join(w for w in re.findall(r"[a-z0-9]+", name.lower()) if w not in title_words)

@@ -51,10 +51,10 @@ is the one this spec describes.
 
 - `GET /library/metadata/{ratingKey}/extras` returns local extras. Each has `Media[].Part[].file` set to the real path. Online trailers come back in the same list with no `file`; skip them. (Live probe, 2026-10-10.)
 - Movie extras hang off the movie's ratingKey. TV extras hang off the show's ratingKey. Season-level extras were empty for every show probed, but including the season keys costs little.
-- Plex ignores nested extras folders. Firefly's `Featurettes/*.mkv` were confirmed, but `Featurettes/Deleted Scenes/*` and `Featurettes/Specials/**` were not. So a naming rule would over-confirm, and Plex's API has to be the authority.
+- Plex ignores nested extras folders. Driftwood's `Featurettes/*.mkv` were confirmed, but `Featurettes/Deleted Scenes/*` and `Featurettes/Specials/**` were not. So a naming rule would over-confirm, and Plex's API has to be the authority.
 - Episode items in `/all?type=4` carry `parentRatingKey` (season) and `grandparentRatingKey` (show).
 - Plex's movie extras folders: `Behind The Scenes`, `Deleted Scenes`, `Featurettes`, `Interviews`, `Scenes`, `Shorts`, `Trailers`, `Other`. Inline suffixes: `-behindthescenes`, `-deleted`, `-featurette`, `-interview`, `-scene`, `-short`, `-trailer`, `-other`. (support.plex.tv/articles/local-files-for-trailers-and-extras/. The TV equivalent page returned 403, so TV placement follows the live probe: `<Show>/Featurettes/` works.)
-- Sonarr's season-0 episodes, with titles, come from `GET /api/v3/episode?seriesId=N`. On the live library they matched 25 of the Needs Review files by title, including all 22 Larry Sanders interviews/outtakes and Supernatural "The Long Road Home" (S00E09). Because the titles come from Sonarr's own episode list, a match means Sonarr already has an episode slot to import the file into.
+- Sonarr's season-0 episodes, with titles, come from `GET /api/v3/episode?seriesId=N`. On the live library they matched 25 of the Needs Review files by title, including all 22 Barry Flanders interviews/outtakes and Uncanny "The Long Road Home" (S00E09). Because the titles come from Sonarr's own episode list, a match means Sonarr already has an episode slot to import the file into.
 
 ## Data flow
 
@@ -171,19 +171,19 @@ order, and the first match wins:
 
 This is a pure function, tuned against the live library.
 
-- Skip files whose name has a regular episode code (`SxxEyy`, both non-zero). These are deleted scenes from a normal episode, e.g. `S01E01 Serenity - Scene 1`, and would otherwise match the "Serenity" special.
+- Skip files whose name has a regular episode code (`SxxEyy`, both non-zero). These are deleted scenes from a normal episode, e.g. `S01E01 Lodestar - Scene 1`, and would otherwise match the "Lodestar" special.
 - Normalize the file name (minus extension) and each missing episode title:
   - lowercase
   - split on non-alphanumerics
   - drop release noise: resolutions, codecs, sources, fps/kbit, bare numbers, `SxxEyy`/`Sxx` codes
-- **Exact match first:** if the cleaned title is longer than 8 characters and the cleaned file name ends with it, it's a match. This catches titles made only of stopwords plus the series name, like "In The Newsroom".
+- **Exact match first:** if the cleaned title is longer than 8 characters and the cleaned file name ends with it, it's a match. This catches titles made only of stopwords plus the series name, like "In The Bullpen".
 - **Otherwise, token match:**
   - Significant tokens leave out stopwords, generic bonus words (interview, deleted, scenes, bonus, visit, garry, …) and the series' own name tokens.
   - Score = min(|shared| / |title tokens|, |shared| / |file tokens|).
   - It is a match at score ≥ 0.5, provided the shared tokens add up to ≥ 4 characters.
   - The highest score wins.
-  - The two-sided ratio stops "Take a Walk on Serenity" from matching the special "Serenity".
-- **Season guard:** when the file name has a season marker (`S03`) and the title has "Season N", they must agree. Without this, every Larry Sanders outtakes file matched "Outtakes - Season 2".
+  - The two-sided ratio stops "Take a Walk on Lodestar" from matching the special "Lodestar".
+- **Season guard:** when the file name has a season marker (`S03`) and the title has "Season N", they must agree. Without this, every Barry Flanders outtakes file matched "Outtakes - Season 2".
 
 Test cases come straight from the live scan; see Testing.
 
@@ -246,22 +246,22 @@ paths:
   - others stay
   - `extra_paths=None` moves nothing
 - **`match_sonarr_special`:**
-  - `LARRY SANDERS S01 bonus - interview Jeremy Piven` matches S00E17 "Interview with Jeremy Piven"
-  - `S05 bonus - Duchovny` matches "Garry Interviews David Duchovny"
+  - `BARRY FLANDERS S01 bonus - interview Jerome Pivot` matches S00E17 "Interview with Jerome Pivot"
+  - `S05 bonus - Duchenko` matches "Gordy Interviews David Duchenko"
   - `S03 outtakes` matches "Outtakes - Season 3", not Season 2
-  - `In The Newsroom.mkv` matches "In The Newsroom" (exact path)
-  - `Supernatural.S15E00.The.Long.Road.Home…` matches S00E09 "Supernatural: The Long Road Home"
-  - `S00E10 - The Shmenges_ The Last Polka` matches S00E07, with a code mismatch
-  - `S01E01 Serenity - Scene 1` gives no match (regular episode code)
-  - `Take a Walk on Serenity` gives no match
+  - `In The Bullpen.mkv` matches "In The Bullpen" (exact path)
+  - `Uncanny.S15E00.The.Long.Road.Home…` matches S00E09 "Uncanny: The Long Road Home"
+  - `S00E10 - The Shmolkas_ The Last Polka` matches S00E07, with a code mismatch
+  - `S01E01 Lodestar - Scene 1` gives no match (regular episode code)
+  - `Take a Walk on Lodestar` gives no match
   - `S06 bonus - deleted scenes` gives no match
 - **`extras_target`:**
-  - Firefly nested `Featurettes/Deleted Scenes/x.mkv` goes to `Firefly/Featurettes/x.mkv`
-  - Gambit `Extras/Trailer.mkv` goes to `…/Trailers/Trailer.mkv`
+  - Driftwood nested `Featurettes/Deleted Scenes/x.mkv` goes to `Driftwood/Featurettes/x.mkv`
+  - Gamble `Extras/Trailer.mkv` goes to `…/Trailers/Trailer.mkv`
   - a plain movie file gives `None`
 - **`assign_verdict`:**
-  - one case per rule, plus rule-order cases: a sample in an extras folder is junk, and a Larry Sanders interview with a Sonarr match is wanted, not plex
-  - the "looks like a special" rule uses the *immediate* parent only, so Serenity's nested featurettes are plex, not identify
+  - one case per rule, plus rule-order cases: a sample in an extras folder is junk, and a Barry Flanders interview with a Sonarr match is wanted, not plex
+  - the "looks like a special" rule uses the *immediate* parent only, so Lodestar's nested featurettes are plex, not identify
 - **Client tests** (pytest-httpx), following the existing patterns:
   - the PlexClient patch's 3 tests
   - `get_missing_specials`
@@ -277,5 +277,5 @@ with mockup v2 (1 / 32 / 35 / 7 / 6, give or take files moved since).
 
 ## Unverified, flagged in the UI or here
 
-- **Crystal Lake Memories is split into pt1/pt2.** It is unverified whether Radarr's Manual Import accepts a multi-part movie. The "Radarr has no file" reason should not claim either way; it just says Radarr has the movie with no file.
+- **Willow Creek Memories is split into pt1/pt2.** It is unverified whether Radarr's Manual Import accepts a multi-part movie. The "Radarr has no file" reason should not claim either way; it just says Radarr has the movie with no file.
 - **Exactly where Sonarr's Manual Import puts a season-0 file** (Season 00 vs Specials folder) depends on the user's Sonarr naming settings. The UI only says to use Manual Import.

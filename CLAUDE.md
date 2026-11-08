@@ -2,6 +2,26 @@
 
 ## Reasoning Captures
 
+### 2026-11-07 — Fail-closed results look like success
+
+**Context:** Mike asked how he'd know all four services were OK after rebuilding the hardened image on the NAS.
+
+**What we discovered:** The only signal was a collapsed "Service status" line that looked the same whether everything worked or not. A down service never errors. It removes results: Sonarr down empties TV from Needs Review, and either \*arr down empties Unlinked Downloads. So the scan that most needs a warning looks like the tidiest library. Now any service that isn't `ok` opens a "This scan is incomplete" box naming the missing results, and a clean scan says "All 4 services OK".
+
+**Why it's not obvious:** Failing closed is the right safety call, so it reads as finished. But it turns an outage into a quiet false negative. Showing the status but leaving it collapsed felt like enough until someone asked what to look for.
+
+**Implication going forward:** Any new fail-closed path must say on screen, without a click, which results it removed. The "All OK" summary only shows when every status, including Plex extras, is `ok`.
+
+### 2026-11-07 — Demo fakes the services, not the app
+
+**Context:** We were building a demo mode for README screenshots and a "try it in 30 seconds" path that doesn't show Mike's real library.
+
+**What we discovered:** `app/demo.py` runs fake qBittorrent, Sonarr, Radarr and Plex HTTP APIs and a sandbox library of sparse files, and the real app talks to them with no `DEMO` flag in its code. The first version reported qBittorrent and Radarr as `unusable`. Every path they tracked was hardlinked, so none of it was in the download-only or media-only scan sets that the overlap check compares against. The fix: put some seeding Linux ISOs on disk that no library file links to, and make one Radarr movie a usenet import with no hardlink.
+
+**Why it's not obvious:** A tidy, fully hardlinked fake library looks like the ideal demo. The `unusable` check only looks at files the scan found unlinked, so a perfect library looks misconfigured.
+
+**Implication going forward:** Don't add demo branches to `main.py`. Change `demo.py`'s library or its fake APIs instead. Each service needs at least one tracked file that isn't hardlinked. `test_demo.py` fails if any service stops reporting `ok` or any verdict group goes empty, so treat that failure as the demo drifting, not test noise.
+
 ### 2026-11-07 — Document a default, don't add a toggle
 
 **Context:** We were deciding whether the delete dialog should let people keep a video's sidecars (subtitles, `.nfo`, artwork) while deleting the video.
@@ -42,11 +62,11 @@ The fix: the row says, in words, "Checking that qBittorrent, Sonarr, Radarr and 
 **Context:** We were matching Needs Review files to Sonarr's missing season-0 episodes by title.
 
 **What we discovered:** On the live library, three guards were each needed to stop a wrong match:
-- **Two-sided token ratio.** It stops "Take a Walk on Serenity" from matching the special "Serenity".
-- **Skipping files with a regular `SxxEyy` code.** It stops "S01E01 Serenity - Scene 1" from matching that same special.
-- **A season guard.** Without it, every Larry Sanders outtakes file matched "Outtakes - Season 2", because number tokens get thrown away as noise.
+- **Two-sided token ratio.** It stops "Take a Walk on Lodestar" from matching the special "Lodestar".
+- **Skipping files with a regular `SxxEyy` code.** It stops "S01E01 Lodestar - Scene 1" from matching that same special.
+- **A season guard.** Without it, every Barry Flanders outtakes file matched "Outtakes - Season 2", because number tokens get thrown away as noise.
 
-A file's own `S00Exx` code can't be trusted either: the SCTV files carry codes Sonarr assigns to different episodes.
+A file's own `S00Exx` code can't be trusted either: the TCTV files carry codes Sonarr assigns to different episodes.
 
 **Why it's not obvious:** Each guard looks like over-engineering until you see the real false positive it prevents. All three only showed up when the matcher ran against real file names.
 
@@ -56,7 +76,7 @@ A file's own `S00Exx` code can't be trusted either: the SCTV files carry codes S
 
 **Context:** We were deciding how to tell which Needs Review files are extras Plex already shows.
 
-**What we discovered:** Plex ignores nested extras folders. Firefly's `Featurettes/*.mkv` were confirmed, but `Featurettes/Deleted Scenes/*` was not. Also, `/library/sections/N/all` never lists extras; only `/library/metadata/{key}/extras` does.
+**What we discovered:** Plex ignores nested extras folders. Driftwood's `Featurettes/*.mkv` were confirmed, but `Featurettes/Deleted Scenes/*` was not. Also, `/library/sections/N/all` never lists extras; only `/library/metadata/{key}/extras` does.
 
 **Why it's not obvious:** Matching Plex's documented folder names and suffixes looks equivalent, but it would wrongly confirm the nested files. Those files would then leave Needs Review as if Plex had them, while Plex doesn't actually show them.
 
