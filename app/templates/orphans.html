@@ -163,6 +163,9 @@
     .deleted-row.fading td { opacity: 0; }
     details.service-status { margin: 12px 0 0; color: var(--text-muted); }
     details.service-status summary { cursor: pointer; }
+    .scan-incomplete { background: var(--warn-bg); border-left: 4px solid var(--warn-border); color: var(--warn-text);
+      padding: 10px 16px; margin: 12px 0 0; border-radius: 4px; max-width: 900px; }
+    .scan-incomplete ul { margin: 6px 0 0; padding-left: 20px; }
     .needs-review {
       background: var(--warn-bg);
       border: 2px solid var(--warn-border);
@@ -232,9 +235,15 @@
 <div id="scan-results">
   {% if error %}<div class="error-banner">{{ error }}</div>{% endif %}
 
+  {% if status_warnings %}
+  <div class="scan-incomplete" id="scan-incomplete" role="alert">
+    <strong>This scan is incomplete.</strong>
+    <ul>{% for w in status_warnings %}<li>{{ w }}</li>{% endfor %}</ul>
+  </div>
+  {% endif %}
   {% if status_lines %}
-  <details class="service-status">
-    <summary>Service status</summary>
+  <details class="service-status"{% if status_warnings %} open{% endif %}>
+    <summary>{% if status_all_ok %}All {{ status_lines | length }} services OK{% else %}Service status{% endif %}</summary>
     <ul id="service-status">
       {% for line in status_lines %}<li>{{ line }}</li>{% endfor %}
     </ul>

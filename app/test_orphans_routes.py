@@ -1471,3 +1471,47 @@ def test_delete_dialog_lists_the_videos_real_file_name():
     different kinds of thing; every line is now a real file name."""
     html = TestClient(app).get("/orphans").text
     assert "li.textContent = tr.dataset.path.split('/').pop() + ' ';" in html
+
+
+def _scan_all(sonarr=None):
+    with patch("main.QBitClient", return_value=_mock_client(get_all_content_paths=set())), \
+         patch("main.SonarrClient", return_value=sonarr or _mock_client(
+             get_all_episode_paths=set(), get_all_queue_paths=set(), get_series=[])), \
+         patch("main.RadarrClient", return_value=_mock_client(
+             get_all_movie_paths=set(), get_all_queue_paths=set(), get_movies=[])), \
+         patch("main.PlexClient", return_value=_mock_client(
+             get_all_movie_paths=set(), get_all_episode_paths=set(), get_movie_files={}, get_episode_files={})):
+        return TestClient(app).post("/orphans/scan")
+
+
+def test_scan_with_every_service_ok_says_so():
+    swapped = _swapped_region(_scan_all().text)
+    assert "All 4 services OK" in swapped
+    assert 'id="scan-incomplete"' not in swapped
+
+
+def test_unreachable_service_warns_what_the_scan_is_missing():
+    """Failing closed makes a down service look like a tidy library, so the
+    page has to say which results are missing, without a click."""
+    sonarr = _mock_client(get_all_queue_paths=set(), get_series=[])
+    sonarr.get_all_episode_paths.side_effect = RuntimeError("sonarr down")
+    import html
+    swapped = html.unescape(_swapped_region(_scan_all(sonarr).text))
+    assert 'id="scan-incomplete"' in swapped
+    assert "Sonarr couldn't be reached" in swapped
+    assert "TV files are missing from Needs Review" in swapped
+    assert "All 4 services OK" not in swapped
+    assert '<details class="service-status" open>' in swapped
+
+
+def test_unusable_service_warning_names_the_prefix_to_check():
+    warnings = main._status_warnings(
+        {"qBittorrent": "ok", "Sonarr": "ok", "Radarr": "unusable", "Plex": "ok", "Plex extras": "not checked"})
+    assert len(warnings) == 1
+    assert "RADARR_PATH_PREFIX" in warnings[0]
+    assert "movie files are missing from Needs Review" in warnings[0]
+
+
+def test_failed_extras_lookup_does_not_claim_all_ok(tmp_path):
+    swapped = _swapped_region(_scan_with(tmp_path, _plex_with_extras(raises=True)).text)
+    assert "services OK" not in swapped

@@ -51,7 +51,7 @@ Synology housekeeping folders (`@eaDir`, `#recycle`) are skipped. Subtitles, `.n
 
 ### Fail closed
 
-If a service is unreachable, or its paths don't overlap with anything on disk (the fingerprint of a wrong `*_PATH_PREFIX`), nothing that depends on it gets flagged. Each scan shows a per-service status (`ok` / `unreachable` / `unusable`) under "Service status", so you can tell a clean result from a blind one.
+If a service is unreachable, or its paths don't overlap with anything on disk (the fingerprint of a wrong `*_PATH_PREFIX`), nothing that depends on it gets flagged. Failing closed makes the results smaller, which can look like a tidy library, so when any service isn't `ok` the scan opens a "This scan is incomplete" warning saying exactly which results are missing. When everything worked, the line under Scan Now just says "All 4 services OK" (click it for the per-service detail).
 
 If one of the four isn't there at all (say you run Jellyfin instead of Plex), it shows as `unreachable` and Needs Review comes back empty rather than wrong.
 
