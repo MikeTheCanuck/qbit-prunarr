@@ -500,6 +500,30 @@ def _status_lines(statuses: dict[str, str]) -> list[str]:
     return lines
 
 
+# What fails closed when each service isn't usable (see classify_*_orphans):
+# the scan comes back smaller, which looks like a tidy library unless said.
+_MISSING_WHEN_DOWN = {
+    "qBittorrent": "Unlinked Downloads is empty",
+    "Sonarr": "TV files are missing from Needs Review and Unlinked Downloads is empty",
+    "Radarr": "movie files are missing from Needs Review and Unlinked Downloads is empty",
+    "Plex": "files Plex couldn't vouch for are missing from Needs Review",
+}
+
+
+def _status_warnings(statuses: dict[str, str]) -> list[str]:
+    """One sentence per core service that isn't ok, saying which results the
+    scan is missing because of it. Plex extras has its own notice."""
+    warnings = []
+    for name, missing in _MISSING_WHEN_DOWN.items():
+        status = statuses.get(name, "ok")
+        if status == "unreachable":
+            warnings.append(f"{name} couldn't be reached, so {missing}.")
+        elif status == "unusable":
+            warnings.append(f"{name}'s file paths don't match anything on disk (check {_PREFIX_ENV_VAR[name]}), "
+                            f"so {missing}.")
+    return warnings
+
+
 def _review_title(display_path: str) -> tuple[str, str]:
     """(readable name, folder) for a Needs Review row. Release names with
     no spaces get their dots and underscores turned into spaces; the
@@ -635,7 +659,7 @@ def _review_buckets(review_candidates: list[dict]) -> list[dict]:
 
 
 _EMPTY_ORPHANS_CONTEXT = {
-    "download_units": [], "review_candidates": [], "review_buckets": [], "status_lines": [], "scanned": False,
+    "download_units": [], "review_candidates": [], "review_buckets": [], "status_lines": [], "status_warnings": [], "status_all_ok": False, "scanned": False,
     "extras_groups": [], "extras_checked": False,
 }
 
@@ -701,6 +725,8 @@ async def orphans_scan(request: Request):
                 "extras_checked": _extras_checked(statuses),
                 "error": None,
                 "status_lines": _status_lines(statuses),
+                "status_warnings": _status_warnings(statuses),
+                "status_all_ok": all(v == "ok" for v in statuses.values()),
                 "scanned": True,
             },
         )
