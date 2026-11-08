@@ -1,0 +1,5 @@
+test_*.py
+__pycache__/
+.pytest_cache/
+@eaDir/
+.DS_Store

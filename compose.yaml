@@ -5,14 +5,19 @@ services:
     container_name: qbit-prunarr
     ports:
       - 8585:8585
-    environment:
-      - PUID=1027
-      - PGID=65536
     env_file: .env
     networks:
       - synobridge
+    user: "1027:65536"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
     security_opt:
       - no-new-privileges:true
+    # Synology's kernel can't enforce this; Docker warns "PIDs limit discarded" and carries on.
+    pids_limit: 200
     restart: unless-stopped
     # On the NAS-specific compose (qbit-prunarr-compose/compose.yaml), add:
     #   volumes:
