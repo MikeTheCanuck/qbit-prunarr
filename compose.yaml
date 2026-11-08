@@ -16,6 +16,7 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+    # Synology's kernel can't enforce this; Docker warns "PIDs limit discarded" and carries on.
     pids_limit: 200
     restart: unless-stopped
     # On the NAS-specific compose (qbit-prunarr-compose/compose.yaml), add:
