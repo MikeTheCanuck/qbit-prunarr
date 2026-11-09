@@ -2,6 +2,16 @@
 
 ## Reasoning Captures
 
+### 2026-11-08 — Keep the repo; PR history is proof
+
+**Context:** Deciding how far to scrub real library titles and release-group tags (YTS, rarbg) out of qbit-prunarr's history before a public launch under Mike's name.
+
+**What we discovered:** The risk is reputational (a recruiter skimming), not legal. Release-group tags were the real tell, because show names alone could come from ripped discs. I first recommended deleting the repo and pushing a fresh one. Mike rejected that: the 12 PRs, four months of commits, specs and reasoning captures are the evidence that this wasn't vibe-coded, and that matters for the AI-skeptical audience. The fix was current files (#12), plus PR #5 and #9 descriptions edited and their old revisions deleted. Old PR diffs still contain the real titles, which is accepted.
+
+**Why it's not obvious:** A fresh repo is the only complete scrub, so it looks like the careful choice. But it throws away the project's credibility to defend against someone who would have to open a months-old PR's "Files changed" tab.
+
+**Implication going forward:** Don't delete or recreate this repo to hide history. Never put real titles, release groups or guest names in tests, docs, commits or PR text. Use the invented same-shape names. If the old diffs need to go later, use filter-repo plus a GitHub Support purge of the PR refs, not a wipe.
+
 ### 2026-11-07 — Fail-closed results look like success
 
 **Context:** Mike asked how he'd know all four services were OK after rebuilding the hardened image on the NAS.

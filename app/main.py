@@ -8,7 +8,7 @@ import re
 import time
 from html import escape
 from typing import Optional
-from urllib.parse import quote
+from urllib.parse import quote, urlparse
 
 from fastapi import FastAPI, Form, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
@@ -38,6 +38,39 @@ from verdicts import KEEP_KINDS, MissingSpecial, RadarrMovie, SeriesSpecials, Ve
 
 app = FastAPI()
 templates = Jinja2Templates(directory="templates")
+
+_SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
+
+
+def same_origin(headers) -> bool:
+    """False when a browser says this request came from a page on another site.
+
+    There's no login, so without this any web page you visit could post a
+    delete form to this app. Browsers always send Origin (or at least Referer)
+    on cross-site POST and DELETE requests. A request with neither came from
+    curl or a script, not a browser, so it can't be a forged request.
+    """
+    source = headers.get("origin") or headers.get("referer")
+    if not source:
+        return True
+    source_host = urlparse(source).netloc
+    allowed = {headers.get("host"), headers.get("x-forwarded-host")}
+    return bool(source_host) and source_host in allowed
+
+
+@app.middleware("http")
+async def refuse_cross_site_changes(request: Request, call_next):
+    if request.method not in _SAFE_METHODS and not same_origin(request.headers):
+        logger.warning(
+            "Refused %s %s from %s", request.method, request.url.path,
+            request.headers.get("origin") or request.headers.get("referer"),
+        )
+        return Response(
+            status_code=403,
+            media_type="text/plain",
+            content="Refused: this request came from a page on another site.",
+        )
+    return await call_next(request)
 logger = logging.getLogger("qbit-prunarr")
 logger.setLevel(logging.INFO)
 if not logger.handlers:

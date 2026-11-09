@@ -122,13 +122,12 @@ Those folder names live in `app/main.py` (`MEDIA_SUBDIRS`, `DOWNLOAD_SUBDIRS`) i
 
 ### Running it
 
-On a Synology NAS (or anything with Docker), using the repo's `compose.yaml` as a starting point:
+On a Synology NAS (or anything with Docker), using the published image (amd64 and arm64):
 
 ```yaml
 services:
   qbit-prunarr:
-    build:
-      context: /volume1/docker/qbit-prunarr/app
+    image: ghcr.io/mikethecanuck/qbit-prunarr:latest
     container_name: qbit-prunarr
     ports:
       - 8585:8585
@@ -137,16 +136,32 @@ services:
     volumes:
       - /volume1/data:/data                       # the shared torrents + media tree
       - /volume1/docker/qbit-prunarr/logs:/logs   # for AUDIT_LOG
+    # Run as the user that owns your data (Synology: id <you>), not root.
+    user: "1027:65536"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 200   # Synology ignores this and warns "PIDs limit discarded"
     restart: unless-stopped
 ```
 
-The orphan trawler needs the data mount; the cold-torrent page works without it.
+The orphan trawler needs the data mount; the cold-torrent page works without it. The user needs write access to `/data` to delete anything, and to the logs folder for the delete log.
 
-After changing the code, rebuild the image rather than just restarting. On Synology, Container Manager's "Clean" recreates the container from the *old* image, which looks like a deploy and isn't:
+To update, pull the new image and recreate the container. On Synology, Container Manager's "Clean" recreates the container from the image it already has, which looks like an update and isn't:
 
 ```
-sudo docker compose build --no-cache && sudo docker compose up -d --force-recreate
+sudo docker compose pull
 ```
+
+```
+sudo docker compose up -d --force-recreate
+```
+
+To build from source instead, swap `image:` for `build: { context: ./app }` (the repo's `compose.yaml` does this) and run `sudo docker compose build --no-cache` before `up`.
 
 Then open `http://<nas>:8585/` for cold torrents and `http://<nas>:8585/orphans` for the trawler.
 
@@ -204,6 +219,7 @@ It's aimed at people who want their library tidy without studying it, not at peo
 ### How it runs
 
 - **No login.** Anyone who can reach port 8585 can delete files. It's meant for a home network you trust. Don't expose it to the internet.
+- **Other sites can't delete through your browser.** Deletes and scans are refused unless the browser says the request came from qbit-prunarr's own page. A reverse proxy that rewrites the `Host` header has to send `X-Forwarded-Host`, or every delete gets a 403.
 - **One stack, one layout.** qBittorrent, Sonarr, Radarr and Plex, hardlinking on import, everything on one volume ([Before you start](#before-you-start)). The folder names (`torrents/`, `media/tv`...) live in `app/main.py`.
 - **Every delete re-scans first.** That's what makes deletes slow. In exchange, a file that Sonarr, Radarr or Plex picked up after your scan is skipped instead of deleted.
 - **Scans are on demand.** Nothing runs on a schedule, and results live in memory until the next scan or a restart.
