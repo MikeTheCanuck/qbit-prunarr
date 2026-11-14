@@ -5,9 +5,8 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 RUN python3.12 -m venv /venv
 COPY requirements.txt .
-# Test-only packages stay out of the runtime image.
-RUN grep -v -E '^pytest' requirements.txt > /tmp/runtime-requirements.txt \
- && /venv/bin/pip install --no-cache-dir -r /tmp/runtime-requirements.txt
+# Runtime pins only; test deps are in requirements-dev.txt.
+RUN /venv/bin/pip install --no-cache-dir -r requirements.txt
 
 # Runtime: Canonical's chiselled Python 3.12 (no shell, no apt, no pip).
 # Same Ubuntu release and /usr/bin/python3.12 as the build stage, so the venv works as-is.
